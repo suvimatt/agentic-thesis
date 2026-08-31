@@ -58,7 +58,7 @@
   <div class="grid">
     <section class="card">
       <div class="row between"><h2>Thesis changes</h2><span id="status" class="badge">Ready</span></div>
-      <div id="claims" class="empty">Start a run to compare the 2024 disclosure with ThesisSnapshot v1.</div>
+      <div id="claims" class="empty">Start a run to compare the 2024 disclosure with your current saved thesis.</div>
     </section>
     <aside class="card">
       <h2>Workflow</h2>
@@ -69,10 +69,10 @@
 
     <section id="review" class="card span">
       <div class="row between">
-        <div><div class="eyebrow">Human Review</div><h2>Accept this evidence update?</h2></div>
-        <div class="row"><button id="reject" class="danger">Reject</button><button id="approve">Approve and create v2</button></div>
+        <div><div class="eyebrow">Review thesis changes</div><h2>Apply this evidence update?</h2></div>
+        <div class="row"><button id="reject" class="danger">Keep current thesis</button><button id="approve">Apply changes</button></div>
       </div>
-      <p class="muted">The authoritative thesis is unchanged until you approve. A stale base version returns HTTP 409.</p>
+      <p class="muted">Review the evidence before updating your saved thesis.</p>
     </section>
 
     <section class="card span">
@@ -113,8 +113,17 @@
 
   async function readResponse(response) {
     const body = await response.json();
-    if (!response.ok) throw new Error(body.detail || `HTTP ${response.status}`);
+    if (!response.ok) {
+      const error = new Error(body.detail || `HTTP ${response.status}`);
+      error.status = response.status;
+      throw error;
+    }
     return body;
+  }
+
+  function setReviewPending(pending) {
+    $('approve').disabled = pending;
+    $('reject').disabled = pending;
   }
 
   async function loadState() {
@@ -149,6 +158,7 @@
         if (event.status === 'awaiting_review') {
           events.close();
           await loadState();
+          setReviewPending(false);
           $('review').style.display = 'block';
         } else if (event.status === 'failed') {
           events.close();
@@ -165,13 +175,29 @@
   }
 
   async function review(action) {
+    setReviewPending(true);
+    setStatus('submitting_review');
+    $('error').style.display = 'none';
     try {
       const state = await readResponse(await fetch(`/runs/${runId}/review`, {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({action})}));
       setStatus(state.status);
       $('review').style.display = 'none';
       $('start').disabled = false;
       if (state.status === 'committed') await loadState();
-    } catch (error) { showError(error.message); }
+    } catch (error) {
+      if (error.status === 409) {
+        setStatus('needs_refresh');
+        $('review').style.display = 'none';
+        $('start').disabled = false;
+        showError(error.message === 'base thesis version is stale'
+          ? 'Your thesis changed while this analysis was running. Start a new analysis to review the latest version.'
+          : error.message);
+      } else {
+        setStatus('awaiting_review');
+        setReviewPending(false);
+        showError(error.message);
+      }
+    }
   }
 
   $('start').addEventListener('click', start);

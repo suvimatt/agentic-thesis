@@ -169,7 +169,9 @@ def create_app(workflow: AgenticThesisWorkflow | None = None) -> FastAPI:
 
     @app.post("/runs", status_code=202)
     async def start_run(request: StartRun) -> dict:
-        thesis = request.thesis or app.state.thesis
+        thesis = request.thesis
+        if thesis is None and app.state.thesis is not None:
+            thesis = await app.state.workflow.current_snapshot(app.state.thesis)
         chunks = request.chunks or app.state.chunks
         if thesis is None or chunks is None:
             raise HTTPException(status_code=422, detail="thesis and chunks are required")
@@ -216,6 +218,8 @@ def create_app(workflow: AgenticThesisWorkflow | None = None) -> FastAPI:
     async def review_run(run_id: str, decision: ReviewDecision) -> dict:
         result = await app.state.workflow.resume(run_id, decision)
         if result.get("status") == "version_conflict":
+            raise HTTPException(status_code=409, detail=result["error"])
+        if result.get("status") == "review_conflict":
             raise HTTPException(status_code=409, detail=result["error"])
         if result.get("status") == "invalid_review":
             raise HTTPException(status_code=422, detail=result["error"])

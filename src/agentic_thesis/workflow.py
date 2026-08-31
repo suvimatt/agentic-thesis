@@ -225,6 +225,25 @@ class AgenticThesisWorkflow:
         state = await self._initialize(run_id, thesis, chunks)
         return await self.graph.ainvoke(state, {"configurable": {"thread_id": run_id}})
 
+    async def current_snapshot(self, initial: ThesisSnapshot) -> ThesisSnapshot:
+        cursor = await self.connection.execute(
+            """
+            SELECT snapshots.snapshot_json
+            FROM thesis_heads AS heads
+            LEFT JOIN thesis_snapshots AS snapshots
+              ON snapshots.thesis_id = heads.thesis_id
+             AND snapshots.version = heads.version
+            WHERE heads.thesis_id = ?
+            """,
+            (initial.thesis_id,),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return initial
+        if row[0] is None:
+            raise RuntimeError("current thesis snapshot is missing")
+        return ThesisSnapshot.model_validate_json(row[0])
+
     async def stream_start(
         self,
         run_id: str,
@@ -257,9 +276,16 @@ class AgenticThesisWorkflow:
         return ResearchState(run_id=run_id, thesis=thesis, chunks=chunks)
 
     async def resume(self, run_id: str, decision: ReviewDecision) -> dict[str, Any]:
+        config = {"configurable": {"thread_id": run_id}}
+        snapshot = await self.graph.aget_state(config)
+        if not snapshot.values or not any(task.interrupts for task in snapshot.tasks):
+            return {
+                "status": "review_conflict",
+                "error": "run is not awaiting review",
+            }
         return await self.graph.ainvoke(
             Command(resume=decision.model_dump(mode="json")),
-            {"configurable": {"thread_id": run_id}},
+            config,
         )
 
     async def get(self, run_id: str) -> dict[str, Any]:

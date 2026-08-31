@@ -306,7 +306,11 @@ async def test_langgraph_resumes_after_restart_and_rejects_stale_commit(tmp_path
         assert page.status_code == 200
         assert page.headers["content-type"].startswith("text/html")
         assert "Monitor a thesis" in page.text
-        assert "Human Review" in page.text
+        assert "Review thesis changes" in page.text
+        assert "Keep current thesis" in page.text
+        assert "Apply changes" in page.text
+        assert "A stale base version returns HTTP 409" not in page.text
+        assert "ThesisSnapshot v1" not in page.text
 
         started = await client.post(
             "/runs",
@@ -329,8 +333,22 @@ async def test_langgraph_resumes_after_restart_and_rejects_stale_commit(tmp_path
         reviewed = await client.post("/runs/api-run/review", json={"action": "approve"})
         assert reviewed.status_code == 200
         assert reviewed.json()["status"] == "committed"
+        repeated_review = await client.post(
+            "/runs/api-run/review",
+            json={"action": "reject"},
+        )
+        assert repeated_review.status_code == 409
+        assert repeated_review.json()["detail"] == "run is not awaiting review"
 
         stale_thesis = ThesisSnapshot.model_validate(reviewed.json()["thesis"])
+        app.state.thesis = api_thesis
+        app.state.chunks = chunks
+        latest_started = await client.post("/runs", json={"run_id": "api-latest"})
+        assert latest_started.status_code == 202
+        await client.get("/runs/api-latest/events")
+        latest_state = (await client.get("/runs/api-latest")).json()
+        assert latest_state["thesis"]["version"] == 2
+
         conflict_started = await client.post(
             "/runs",
             json={

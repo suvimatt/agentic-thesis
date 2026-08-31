@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 from collections.abc import AsyncIterator
@@ -6,7 +7,8 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.encoders import jsonable_encoder
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
+from dotenv import load_dotenv
 from openai import AsyncOpenAI
 from pydantic import BaseModel
 
@@ -37,6 +39,7 @@ def _public_state(run_id: str, state: dict) -> dict:
 
 async def _default_workflow() -> tuple[AgenticThesisWorkflow, ThesisSnapshot, list[DisclosureChunk]]:
     root = Path(__file__).parents[2]
+    load_dotenv(root / ".env", override=True)
     thesis = ThesisSnapshot.model_validate_json((root / "data/thesis_v1.json").read_text())
     filings = [
         (
@@ -64,8 +67,12 @@ async def _default_workflow() -> tuple[AgenticThesisWorkflow, ThesisSnapshot, li
     ]
     model = OpenAIModel(
         AsyncOpenAI(),
+        embedding_client=AsyncOpenAI(
+            api_key=os.environ["EMBEDDING_API_KEY"],
+            base_url=os.environ["EMBEDDING_BASE_URL"],
+        ),
         model=os.getenv("AGENTIC_THESIS_MODEL", "gpt-5-mini"),
-        embedding_model=os.getenv("AGENTIC_THESIS_EMBEDDING_MODEL", "text-embedding-3-small"),
+        embedding_model=os.environ["AGENTIC_THESIS_EMBEDDING_MODEL"],
     )
     retriever = HybridRetriever(chunks, embed=model.embed, rerank=model.rerank)
     await retriever.index()
@@ -83,6 +90,9 @@ def create_app(workflow: AgenticThesisWorkflow | None = None) -> FastAPI:
         if workflow is None:
             app.state.workflow, app.state.thesis, app.state.chunks = await _default_workflow()
         yield
+        for task in app.state.run_tasks.values():
+            if not task.done():
+                task.cancel()
         if workflow is None:
             await app.state.workflow.close()
 
@@ -91,16 +101,87 @@ def create_app(workflow: AgenticThesisWorkflow | None = None) -> FastAPI:
         app.state.workflow = workflow
         app.state.thesis = None
         app.state.chunks = None
+    app.state.run_tasks = {}
+    app.state.run_events = {}
+    app.state.run_conditions = {}
 
-    @app.post("/runs")
+    async def publish(run_id: str, event: dict) -> None:
+        condition = app.state.run_conditions[run_id]
+        async with condition:
+            app.state.run_events[run_id].append(jsonable_encoder(event))
+            condition.notify_all()
+
+    async def execute_run(
+        run_id: str,
+        thesis: ThesisSnapshot,
+        chunks: list[DisclosureChunk],
+    ) -> None:
+        terminal = False
+        try:
+            async for update in app.state.workflow.stream_start(run_id, thesis, chunks):
+                for node, payload in update.items():
+                    if node == "__interrupt__":
+                        await publish(
+                            run_id,
+                            {"node": "human_review", "status": "awaiting_review", "error": None},
+                        )
+                        terminal = True
+                        continue
+                    event = {
+                        "node": node,
+                        "status": "running",
+                        "latency_ms": payload.get("timings_ms", {}).get(node),
+                        "error": None,
+                    }
+                    if node == "build_evidence_packs":
+                        event["claims"] = [
+                            {
+                                "claim_id": pack.claim_id,
+                                "tokens_before": pack.tokens_before,
+                                "tokens_after": pack.tokens_after,
+                            }
+                            for pack in payload.get("evidence_packs", [])
+                        ]
+                    await publish(run_id, event)
+            if not terminal:
+                state = await app.state.workflow.get(run_id)
+                await publish(
+                    run_id,
+                    {
+                        "node": "workflow",
+                        "status": state.get("status", "completed"),
+                        "error": state.get("error"),
+                    },
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            error = str(exc)
+            await app.state.workflow.record_error(run_id, error)
+            await publish(
+                run_id,
+                {"node": "workflow", "status": "failed", "error": error},
+            )
+
+    @app.get("/", response_class=FileResponse)
+    async def product_page() -> FileResponse:
+        return FileResponse(Path(__file__).with_name("index.html"))
+
+    @app.post("/runs", status_code=202)
     async def start_run(request: StartRun) -> dict:
         thesis = request.thesis or app.state.thesis
         chunks = request.chunks or app.state.chunks
         if thesis is None or chunks is None:
             raise HTTPException(status_code=422, detail="thesis and chunks are required")
-        result = await app.state.workflow.start(request.run_id, thesis, chunks)
-        status = "awaiting_review" if result.get("__interrupt__") else result.get("status", "running")
-        return {"run_id": request.run_id, "status": status}
+        existing = app.state.run_tasks.get(request.run_id)
+        if existing and not existing.done():
+            raise HTTPException(status_code=409, detail="run is already active")
+        app.state.run_events[request.run_id] = []
+        app.state.run_conditions[request.run_id] = asyncio.Condition()
+        app.state.run_tasks[request.run_id] = asyncio.create_task(
+            execute_run(request.run_id, thesis, chunks)
+        )
+        return {"run_id": request.run_id, "status": "running"}
 
     @app.get("/runs/{run_id}")
     async def get_run(run_id: str) -> dict:
@@ -111,27 +192,23 @@ def create_app(workflow: AgenticThesisWorkflow | None = None) -> FastAPI:
 
     @app.get("/runs/{run_id}/events")
     async def run_events(run_id: str) -> StreamingResponse:
-        state = await app.state.workflow.get(run_id)
-        if not state:
+        if run_id not in app.state.run_events:
             raise HTTPException(status_code=404, detail="run not found")
 
         async def stream() -> AsyncIterator[str]:
-            for pack in state.get("evidence_packs", []):
-                event = {
-                    "node": "build_evidence_packs",
-                    "claim_id": pack.claim_id,
-                    "tokens_before": pack.tokens_before,
-                    "tokens_after": pack.tokens_after,
-                    "latency_ms": state.get("timings_ms", {}).get("build_evidence_packs"),
-                    "error": None,
-                }
-                yield f"event: state\ndata: {json.dumps(event)}\n\n"
-            final = {
-                "node": state.get("status"),
-                "latency_ms": sum(state.get("timings_ms", {}).values()),
-                "error": state.get("error"),
-            }
-            yield f"event: state\ndata: {json.dumps(final)}\n\n"
+            index = 0
+            condition = app.state.run_conditions[run_id]
+            while True:
+                async with condition:
+                    await condition.wait_for(
+                        lambda: index < len(app.state.run_events[run_id])
+                    )
+                    events = app.state.run_events[run_id][index:]
+                    index += len(events)
+                for event in events:
+                    yield f"event: state\ndata: {json.dumps(event)}\n\n"
+                    if event["status"] in {"awaiting_review", "committed", "rejected", "failed"}:
+                        return
 
         return StreamingResponse(stream(), media_type="text/event-stream")
 

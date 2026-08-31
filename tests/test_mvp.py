@@ -1,4 +1,6 @@
+import json
 from pathlib import Path
+from types import SimpleNamespace
 
 from httpx import ASGITransport, AsyncClient
 
@@ -14,6 +16,7 @@ from agentic_thesis.models import (
 )
 from agentic_thesis.rag import (
     HybridRetriever,
+    OpenAIModel,
     RetrievalHit,
     build_evidence_pack,
     chunk_filing,
@@ -46,17 +49,10 @@ async def test_hybrid_retrieval_reports_measured_recall_at_5() -> None:
     root = Path(__file__).parents[1]
     filing = (root / "data/filings/aapl-2024-10-k.html").read_text(errors="ignore")
     chunks = chunk_filing(filing, accession="aapl-2024", filing_date="2024-09-28")
-    cases = [
-        ("Why did Greater China sales decline?", "Greater China net sales decreased"),
-        ("How did Products and Services gross margin percentages compare in 2024?", "Services 73.9 %"),
-        ("What risk comes from components obtained from single or limited sources?", "certain components are currently obtained from single or limited sources"),
-        ("How did Mac sales change?", "Mac net sales increased during 2024"),
-        ("What competitive pressure affects the active device base?", "installed base of active devices"),
-    ]
-    gold = {
-        query: next(chunk.chunk_id for chunk in chunks if phrase.lower() in chunk.text.lower())
-        for query, phrase in cases
-    }
+    cases = json.loads((root / "evals/gold.json").read_text())
+    gold = {case["query"]: case["gold_chunk_id"] for case in cases}
+    by_id = {chunk.chunk_id: chunk for chunk in chunks}
+    assert all(case["anchor"].lower() in by_id[case["gold_chunk_id"]].text.lower() for case in cases)
 
     async def embed(texts: list[str]) -> list[list[float]]:
         return HybridRetriever.deterministic_embeddings(texts, dimensions=512)
@@ -84,6 +80,11 @@ async def test_hybrid_retrieval_reports_measured_recall_at_5() -> None:
     metrics = {mode: recall_at_k(result, gold, 5) for mode, result in results.items()}
 
     assert metrics == {"bm25": 1.0, "vector": 0.6, "hybrid": 1.0, "rerank": 1.0}
+    for case in cases:
+        hits = await retriever.search(case["query"], mode="rerank", limit=5)
+        pack = build_evidence_pack("gold-eval", case["query"], hits, token_budget=2_000)
+        assert f'e:{case["gold_chunk_id"]}' in pack.retained_evidence_ids
+        assert pack.tokens_after <= 2_000
 
 
 def test_evidence_pack_respects_budget_and_rejects_forged_quote() -> None:
@@ -137,6 +138,101 @@ def test_evidence_pack_respects_budget_and_rejects_forged_quote() -> None:
     assert rejected.evidence_ids == []
 
 
+async def test_structured_analysis_receives_compressed_quotes_not_source_chunks() -> None:
+    chunk = DisclosureChunk(
+        chunk_id="new",
+        accession="new",
+        filing_date="2024-09-28",
+        section="Gross Margin",
+        text="Services gross margin was 73.9 percent. Nearby context. "
+        + "Unselected source-only detail. " * 100,
+        start_char=0,
+        end_char=2040,
+    )
+    pack = build_evidence_pack(
+        "services-margin",
+        "Services mix supports margins.",
+        [RetrievalHit(chunk, 1.0)],
+        token_budget=30,
+    )
+    thesis = ThesisSnapshot(
+        thesis_id="aapl-primary",
+        company="Apple Inc.",
+        version=1,
+        claims=[
+            ThesisClaim(
+                claim_id="services-margin",
+                statement="Services mix supports margins.",
+                rationale="Services has higher margins.",
+            )
+        ],
+    )
+    delta = ThesisDelta(
+        base_thesis_version=1,
+        claim_deltas=[
+            ClaimDelta(
+                claim_id="services-margin",
+                status=DeltaStatus.SUPPORTED,
+                explanation="Services margin remains high.",
+                evidence_ids=[pack.items[0].evidence_id],
+            )
+        ],
+    )
+
+    class FakeResponses:
+        input: list
+
+        async def parse(self, **kwargs):
+            self.input = kwargs["input"]
+            return SimpleNamespace(output_parsed=delta)
+
+    class FakeEmbeddings:
+        calls: list[int] = []
+
+        async def create(self, **kwargs):
+            self.model = kwargs["model"]
+            self.calls.append(len(kwargs["input"]))
+            return SimpleNamespace(
+                data=[SimpleNamespace(embedding=[1.0, 0.0]) for _ in kwargs["input"]]
+            )
+
+    client = SimpleNamespace(responses=FakeResponses())
+    embedding_client = SimpleNamespace(embeddings=FakeEmbeddings())
+    model = OpenAIModel(
+        client,
+        embedding_client=embedding_client,
+        embedding_model="separate-embedding-model",
+    )
+    assert len(await model.embed(["query"] * 21)) == 21
+    assert embedding_client.embeddings.calls == [20, 1]
+    assert embedding_client.embeddings.model == "separate-embedding-model"
+    await model.analyze(thesis, [pack])
+    prompt = client.responses.input[1]["content"]
+
+    assert pack.items[0].quote in prompt
+    assert "Unselected source-only detail" not in prompt
+    assert "source_text" not in prompt
+
+
+async def test_embedding_requests_use_the_separate_embedding_client() -> None:
+    class WrongEmbeddings:
+        async def create(self, **kwargs):
+            raise AssertionError("embedding request reached the language-model service")
+
+    class Embeddings:
+        async def create(self, **kwargs):
+            assert kwargs == {"model": "provider-embedding", "input": ["Apple services"]}
+            return SimpleNamespace(data=[SimpleNamespace(embedding=[0.25, 0.75])])
+
+    model = OpenAIModel(
+        SimpleNamespace(embeddings=WrongEmbeddings()),
+        embedding_client=SimpleNamespace(embeddings=Embeddings()),
+        embedding_model="provider-embedding",
+    )
+
+    assert await model.embed(["Apple services"]) == [[0.25, 0.75]]
+
+
 async def test_langgraph_resumes_after_restart_and_rejects_stale_commit(tmp_path: Path) -> None:
     thesis = ThesisSnapshot(
         thesis_id="aapl-primary",
@@ -168,6 +264,8 @@ async def test_langgraph_resumes_after_restart_and_rejects_stale_commit(tmp_path
             return [RetrievalHit(chunks[0], 1.0)]
 
     async def analyze(snapshot: ThesisSnapshot, packs: list) -> ThesisDelta:
+        if snapshot.thesis_id == "aapl-error":
+            raise TimeoutError("model timed out")
         return ThesisDelta(
             base_thesis_version=snapshot.version,
             claim_deltas=[
@@ -204,6 +302,12 @@ async def test_langgraph_resumes_after_restart_and_rejects_stale_commit(tmp_path
     api_thesis = thesis.model_copy(update={"thesis_id": "aapl-api"})
     app = create_app(restarted_again)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        page = await client.get("/")
+        assert page.status_code == 200
+        assert page.headers["content-type"].startswith("text/html")
+        assert "Monitor a thesis" in page.text
+        assert "Human Review" in page.text
+
         started = await client.post(
             "/runs",
             json={
@@ -212,21 +316,22 @@ async def test_langgraph_resumes_after_restart_and_rejects_stale_commit(tmp_path
                 "chunks": [chunk.model_dump(mode="json") for chunk in chunks],
             },
         )
-        assert started.status_code == 200
-        assert started.json()["status"] == "awaiting_review"
-        assert (await client.get("/runs/api-run")).json()["status"] == "awaiting_review"
+        assert started.status_code == 202
+        assert started.json()["status"] == "running"
 
         events = await client.get("/runs/api-run/events")
         assert events.headers["content-type"].startswith("text/event-stream")
-        assert "event: state" in events.text
+        assert '"node": "retrieve_claims"' in events.text
         assert '"tokens_after"' in events.text
+        assert '"status": "awaiting_review"' in events.text
+        assert (await client.get("/runs/api-run")).json()["status"] == "awaiting_review"
 
         reviewed = await client.post("/runs/api-run/review", json={"action": "approve"})
         assert reviewed.status_code == 200
         assert reviewed.json()["status"] == "committed"
 
         stale_thesis = ThesisSnapshot.model_validate(reviewed.json()["thesis"])
-        await client.post(
+        conflict_started = await client.post(
             "/runs",
             json={
                 "run_id": "api-conflict",
@@ -234,10 +339,29 @@ async def test_langgraph_resumes_after_restart_and_rejects_stale_commit(tmp_path
                 "chunks": [chunk.model_dump(mode="json") for chunk in chunks],
             },
         )
+        assert conflict_started.status_code == 202
+        await client.get("/runs/api-conflict/events")
         await restarted_again.advance_head("aapl-api")
         conflict_response = await client.post(
             "/runs/api-conflict/review",
             json={"action": "approve"},
         )
         assert conflict_response.status_code == 409
+
+        error_thesis = thesis.model_copy(update={"thesis_id": "aapl-error"})
+        error_started = await client.post(
+            "/runs",
+            json={
+                "run_id": "api-error",
+                "thesis": error_thesis.model_dump(mode="json"),
+                "chunks": [chunk.model_dump(mode="json") for chunk in chunks],
+            },
+        )
+        assert error_started.status_code == 202
+        error_events = await client.get("/runs/api-error/events")
+        assert '"status": "failed"' in error_events.text
+        assert "model timed out" in error_events.text
+        error_state = (await client.get("/runs/api-error")).json()
+        assert error_state["status"] == "failed"
+        assert error_state["error"] == "model timed out"
     await restarted_again.close()

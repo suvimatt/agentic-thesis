@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AgenticThesis</title>
+  <style>
+    :root { color-scheme: light; --ink:#172019; --muted:#667069; --line:#dce3dd; --paper:#f6f8f4; --card:#fff; --accent:#276749; --soft:#e9f3ec; --warn:#8a5a10; --bad:#9b2c2c; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--paper); color:var(--ink); font:15px/1.55 ui-sans-serif,system-ui,-apple-system,sans-serif; }
+    main { width:min(1120px,calc(100% - 32px)); margin:auto; padding:44px 0 72px; }
+    header { display:grid; grid-template-columns:1fr auto; gap:24px; align-items:end; margin-bottom:28px; }
+    h1 { margin:0; font:700 clamp(34px,5vw,58px)/1.05 ui-serif,Georgia,serif; letter-spacing:-.03em; }
+    h2,h3,p { margin-top:0; }
+    h2 { font-size:18px; }
+    h3 { font-size:15px; margin-bottom:6px; }
+    .eyebrow { color:var(--accent); font-weight:700; letter-spacing:.12em; text-transform:uppercase; }
+    .lede { max-width:700px; color:var(--muted); font-size:18px; margin:14px 0 0; }
+    button { border:0; border-radius:10px; padding:12px 17px; background:var(--accent); color:white; font:inherit; font-weight:700; cursor:pointer; }
+    button.secondary { background:white; color:var(--ink); border:1px solid var(--line); }
+    button.danger { background:var(--bad); }
+    button:disabled { opacity:.5; cursor:wait; }
+    button:focus-visible,a:focus-visible { outline:3px solid #8bc5a3; outline-offset:2px; }
+    .grid { display:grid; grid-template-columns:minmax(0,1.35fr) minmax(290px,.65fr); gap:18px; }
+    .card { background:var(--card); border:1px solid var(--line); border-radius:16px; padding:22px; box-shadow:0 8px 30px rgba(22,40,27,.04); }
+    .span { grid-column:1/-1; }
+    .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+    .between { justify-content:space-between; }
+    .badge { display:inline-flex; padding:4px 9px; border-radius:999px; background:var(--soft); color:var(--accent); font-size:12px; font-weight:750; text-transform:uppercase; }
+    .badge.weakened,.badge.possibly_invalidated { background:#fff3db; color:var(--warn); }
+    .badge.unknown,.badge.failed { background:#fde8e8; color:var(--bad); }
+    .muted { color:var(--muted); }
+    .steps { list-style:none; padding:0; margin:12px 0 0; }
+    .steps li { display:grid; grid-template-columns:12px 1fr auto; gap:10px; align-items:center; padding:9px 0; border-top:1px solid var(--line); }
+    .dot { width:9px; height:9px; border-radius:50%; background:#b6c0b8; }
+    .done .dot { background:var(--accent); }
+    .claim,.evidence { padding:15px 0; border-top:1px solid var(--line); }
+    .claim:first-child,.evidence:first-child { border-top:0; padding-top:0; }
+    blockquote { margin:9px 0; padding:10px 12px; border-left:3px solid #8eb49a; background:var(--soft); color:#314337; }
+    code { font-size:12px; color:var(--muted); }
+    .empty { padding:26px 0; text-align:center; color:var(--muted); }
+    #review { display:none; border-color:#9bc2a7; }
+    #error { display:none; color:var(--bad); background:#fff0f0; border:1px solid #f3c5c5; border-radius:10px; padding:10px 12px; margin-top:12px; }
+    @media (max-width:760px) { header,.grid { grid-template-columns:1fr; } header button { width:100%; } }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <div class="eyebrow">Evidence-first investment research</div>
+      <h1>Monitor a thesis,<br>not a news feed.</h1>
+      <p class="lede">See how a new company disclosure supports, weakens, or possibly invalidates each versioned investment claim.</p>
+    </div>
+    <button id="start">Analyze Apple 2024 10-K</button>
+  </header>
+
+  <div class="grid">
+    <section class="card">
+      <div class="row between"><h2>Thesis changes</h2><span id="status" class="badge">Ready</span></div>
+      <div id="claims" class="empty">Start a run to compare the 2024 disclosure with ThesisSnapshot v1.</div>
+    </section>
+    <aside class="card">
+      <h2>Workflow</h2>
+      <p class="muted">Live LangGraph progress. No chain-of-thought is exposed.</p>
+      <ol id="steps" class="steps"></ol>
+      <div id="error" role="alert"></div>
+    </aside>
+
+    <section id="review" class="card span">
+      <div class="row between">
+        <div><div class="eyebrow">Human Review</div><h2>Accept this evidence update?</h2></div>
+        <div class="row"><button id="reject" class="danger">Reject</button><button id="approve">Approve and create v2</button></div>
+      </div>
+      <p class="muted">The authoritative thesis is unchanged until you approve. A stale base version returns HTTP 409.</p>
+    </section>
+
+    <section class="card span">
+      <h2>Evidence packs</h2>
+      <div id="evidence" class="empty">Citations and compression records will appear here.</div>
+    </section>
+  </div>
+</main>
+<script>
+  const $ = id => document.getElementById(id);
+  let runId;
+
+  function escapeHtml(value) {
+    const element = document.createElement('div');
+    element.textContent = value ?? '';
+    return element.innerHTML;
+  }
+
+  function setStatus(value) {
+    $('status').textContent = value.replaceAll('_', ' ');
+    $('status').className = `badge ${value}`;
+  }
+
+  function showError(message) {
+    $('error').style.display = 'block';
+    $('error').textContent = message;
+  }
+
+  function addStep(event) {
+    const item = document.createElement('li');
+    item.className = 'done';
+    const compression = event.claims
+      ? event.claims.map(c => `${c.tokens_before}→${c.tokens_after} tokens`).join(', ')
+      : event.latency_ms != null ? `${event.latency_ms} ms` : '';
+    item.innerHTML = `<span class="dot"></span><span>${escapeHtml(event.node)}</span><code>${escapeHtml(compression)}</code>`;
+    $('steps').append(item);
+  }
+
+  async function readResponse(response) {
+    const body = await response.json();
+    if (!response.ok) throw new Error(body.detail || `HTTP ${response.status}`);
+    return body;
+  }
+
+  async function loadState() {
+    const state = await readResponse(await fetch(`/runs/${runId}`));
+    const deltas = new Map((state.delta?.claim_deltas || []).map(delta => [delta.claim_id, delta]));
+    $('claims').className = '';
+    $('claims').innerHTML = state.thesis.claims.map(claim => {
+      const delta = deltas.get(claim.claim_id);
+      return `<article class="claim"><div class="row between"><h3>${escapeHtml(claim.statement)}</h3><span class="badge ${delta?.status || 'unknown'}">${escapeHtml(delta?.status || 'unknown')}</span></div><p>${escapeHtml(delta?.explanation || 'No supported change.')}</p></article>`;
+    }).join('');
+    $('evidence').className = '';
+    $('evidence').innerHTML = state.evidence_packs.flatMap(pack => pack.items.map(item =>
+      `<article class="evidence"><div class="row between"><strong>${escapeHtml(pack.claim_id)}</strong><span class="muted">${escapeHtml(item.filing_date)} · ${escapeHtml(item.section)}</span></div><blockquote>${escapeHtml(item.quote)}</blockquote><div class="row between"><code>${escapeHtml(item.evidence_id)}</code>${item.source_url ? `<a href="${escapeHtml(item.source_url)}" target="_blank" rel="noreferrer">Open SEC source ↗</a>` : ''}</div></article>`
+    )).join('');
+    return state;
+  }
+
+  async function start() {
+    $('start').disabled = true;
+    $('steps').innerHTML = '';
+    $('error').style.display = 'none';
+    $('review').style.display = 'none';
+    setStatus('running');
+    runId = `aapl-2024-${Date.now()}`;
+    try {
+      await readResponse(await fetch('/runs', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({run_id:runId})}));
+      const events = new EventSource(`/runs/${runId}/events`);
+      events.addEventListener('state', async message => {
+        const event = JSON.parse(message.data);
+        addStep(event);
+        setStatus(event.status);
+        if (event.status === 'awaiting_review') {
+          events.close();
+          await loadState();
+          $('review').style.display = 'block';
+        } else if (event.status === 'failed') {
+          events.close();
+          showError(event.error || 'Run failed');
+          $('start').disabled = false;
+        }
+      });
+      events.onerror = () => { events.close(); showError('Event stream disconnected.'); $('start').disabled = false; };
+    } catch (error) {
+      setStatus('failed');
+      showError(error.message);
+      $('start').disabled = false;
+    }
+  }
+
+  async function review(action) {
+    try {
+      const state = await readResponse(await fetch(`/runs/${runId}/review`, {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({action})}));
+      setStatus(state.status);
+      $('review').style.display = 'none';
+      $('start').disabled = false;
+      if (state.status === 'committed') await loadState();
+    } catch (error) { showError(error.message); }
+  }
+
+  $('start').addEventListener('click', start);
+  $('approve').addEventListener('click', () => review('approve'));
+  $('reject').addEventListener('click', () => review('reject'));
+</script>
+</body>
+</html>

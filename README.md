@@ -45,7 +45,8 @@ flowchart LR
 - quote-to-source citation validation; unsupported output is downgraded to `unknown`;
 - a six-node LangGraph with Human Review interrupt and SQLite checkpoint/resume;
 - immutable thesis snapshots and compare-and-swap conflict protection;
-- async FastAPI, bounded/timeout-wrapped model calls, and SSE state events without chain-of-thought.
+- async FastAPI, background runs, bounded/timeout-wrapped model calls, and live LangGraph SSE events without chain-of-thought;
+- a dependency-free product page for progress, claim deltas, citations, Context compression, and Human Review.
 
 ## Reproduce the verified path
 
@@ -61,27 +62,52 @@ Observed on the checked-in fixtures on 2026-08-31:
 
 | Check | Observed result |
 | --- | ---: |
-| Tests | 5 passed |
+| Tests | 7 passed |
 | 2023 extracted tokens / chunks | 48,923 / 109 |
 | 2024 extracted tokens / chunks | 48,752 / 110 |
 | BM25 Recall@5 | 1.00 |
 | Deterministic fake-vector Recall@5 | 0.60 |
 | RRF hybrid Recall@5 | 1.00 |
 | Deterministic fake-rerank Recall@5 | 1.00 |
+| Gold evidence retained after compression | 5 / 5 |
 | Forged citation | downgraded to `unknown` |
 | Restart/resume | committed v2 from the same run ID |
 | Stale version | rejected with `version_conflict` / HTTP 409 |
 
-Recall uses the five cases in `evals/gold.json`. The vector and rerank numbers above use deterministic test doubles, so they verify orchestration and metric calculation—not OpenAI model quality. No live OpenAI evaluation was run because this environment had no `OPENAI_API_KEY`.
+Recall uses the five cases in `evals/gold.json`. The deterministic vector and rerank numbers above verify orchestration and metric calculation.
 
-## Run the API with OpenAI
+The checked-in `evals/live_results.json` records a real API run over both filings (219 chunks) using `qwen3.7-text-embedding` and `gpt-5.6-luna`:
+
+| Live check | Observed result |
+| --- | ---: |
+| BM25 / vector / hybrid / rerank Recall@5 | 1.00 / 0.80 / 1.00 / 1.00 |
+| Gold evidence retained after compression | 5 / 5 |
+| Validated claim statuses | supported / possibly_invalidated / weakened |
+| Embedding index | 8.93 s |
+| Five-query rerank evaluation | 36.22 s |
+| Three-claim structured analysis | 18.21 s |
+
+These timings are one measured evaluation run, not a latency benchmark or production SLO.
+
+## Run locally
 
 ```bash
-export OPENAI_API_KEY='...'
-.venv/bin/uvicorn agentic_thesis.api:app --port 8000
+cp .env.example .env
+# Set the API endpoints, models, and keys in .env, then:
+.venv/bin/uvicorn agentic_thesis.api:app --env-file .env --port 8000
 ```
 
-Startup indexes the two fixed filings through `text-embedding-3-small`. Start and review the fixed replay:
+Open `http://127.0.0.1:8000` for the product page. Startup indexes the two fixed filings through the configured embedding endpoint. The same workflow can be driven through the API.
+
+Run the live embedding, rerank, Context compression, and Structured Outputs evaluation with:
+
+```bash
+.venv/bin/python evals/run_live.py
+```
+
+The measured report is written to `evals/live_results.json`; it never contains the API key.
+
+Start and review a run through the API:
 
 ```bash
 curl -X POST http://localhost:8000/runs \
@@ -101,5 +127,5 @@ Other endpoints are `GET /runs/{run_id}` and the generated `/docs` OpenAPI page.
 
 - fixed historical Apple filings; no crawler or real-time monitor;
 - Qdrant currently runs in-process; SQLite persists workflow and thesis state;
-- no Web UI, portfolio, valuation, Multi-Agent roles, scheduler, or distributed queue;
-- no measured live-model accuracy, cost, throughput, p50, p95, or production-readiness claim.
+- no portfolio management, valuation, Multi-Agent roles, scheduler, or distributed queue;
+- the five-query eval is intentionally small; no measured cost, throughput, p50, p95, or production-readiness claim.

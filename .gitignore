@@ -219,3 +219,4 @@ __marimo__/
 
 # AgenticThesis runtime state
 *.sqlite
+*.sqlite-*

@@ -91,16 +91,24 @@ class OpenAIModel:
         self,
         client: AsyncOpenAI,
         *,
+        embedding_client: AsyncOpenAI | None = None,
         model: str = "gpt-5-mini",
         embedding_model: str = "text-embedding-3-small",
     ) -> None:
         self.client = client
+        self.embedding_client = embedding_client or client
         self.model = model
         self.embedding_model = embedding_model
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
-        response = await self.client.embeddings.create(model=self.embedding_model, input=texts)
-        return [item.embedding for item in response.data]
+        embeddings: list[list[float]] = []
+        for start in range(0, len(texts), 20):
+            response = await self.embedding_client.embeddings.create(
+                model=self.embedding_model,
+                input=texts[start : start + 20],
+            )
+            embeddings.extend(item.embedding for item in response.data)
+        return embeddings
 
     async def rerank(self, query: str, candidates: list[DisclosureChunk]) -> list[str]:
         candidate_text = "\n\n".join(
@@ -124,6 +132,13 @@ class OpenAIModel:
         thesis: ThesisSnapshot,
         evidence_packs: list[EvidencePack],
     ) -> ThesisDelta:
+        prompt_packs = [
+            {
+                **pack.model_dump(exclude={"items"}),
+                "items": [item.model_dump(exclude={"source_text"}) for item in pack.items],
+            }
+            for pack in evidence_packs
+        ]
         response = await self.client.responses.parse(
             model=self.model,
             input=[
@@ -139,7 +154,7 @@ class OpenAIModel:
                     "role": "user",
                     "content": (
                         f"Thesis: {thesis.model_dump_json()}\n\n"
-                        f"Evidence packs: {[pack.model_dump() for pack in evidence_packs]}"
+                        f"Evidence packs: {prompt_packs}"
                     ),
                 },
             ],

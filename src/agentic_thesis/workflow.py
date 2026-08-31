@@ -1,5 +1,5 @@
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 from time import perf_counter
 from typing import Any
@@ -222,6 +222,29 @@ class AgenticThesisWorkflow:
         thesis: ThesisSnapshot,
         chunks: list[DisclosureChunk],
     ) -> dict[str, Any]:
+        state = await self._initialize(run_id, thesis, chunks)
+        return await self.graph.ainvoke(state, {"configurable": {"thread_id": run_id}})
+
+    async def stream_start(
+        self,
+        run_id: str,
+        thesis: ThesisSnapshot,
+        chunks: list[DisclosureChunk],
+    ) -> AsyncIterator[dict[str, Any]]:
+        state = await self._initialize(run_id, thesis, chunks)
+        async for update in self.graph.astream(
+            state,
+            {"configurable": {"thread_id": run_id}},
+            stream_mode="updates",
+        ):
+            yield update
+
+    async def _initialize(
+        self,
+        run_id: str,
+        thesis: ThesisSnapshot,
+        chunks: list[DisclosureChunk],
+    ) -> ResearchState:
         await self.connection.execute(
             "INSERT OR IGNORE INTO thesis_heads VALUES (?, ?)",
             (thesis.thesis_id, thesis.version),
@@ -231,8 +254,7 @@ class AgenticThesisWorkflow:
             (thesis.thesis_id, thesis.version, thesis.model_dump_json()),
         )
         await self.connection.commit()
-        state = ResearchState(run_id=run_id, thesis=thesis, chunks=chunks)
-        return await self.graph.ainvoke(state, {"configurable": {"thread_id": run_id}})
+        return ResearchState(run_id=run_id, thesis=thesis, chunks=chunks)
 
     async def resume(self, run_id: str, decision: ReviewDecision) -> dict[str, Any]:
         return await self.graph.ainvoke(
@@ -246,6 +268,15 @@ class AgenticThesisWorkflow:
         if any(task.interrupts for task in snapshot.tasks):
             values["status"] = "awaiting_review"
         return values
+
+    async def record_error(self, run_id: str, error: str) -> None:
+        config = {"configurable": {"thread_id": run_id}}
+        snapshot = await self.graph.aget_state(config)
+        if snapshot.values:
+            await self.graph.aupdate_state(
+                config,
+                {"status": "failed", "error": error},
+            )
 
     async def advance_head(self, thesis_id: str) -> None:
         await self.connection.execute(

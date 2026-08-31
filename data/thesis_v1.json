@@ -1,0 +1,28 @@
+{
+  "thesis_id": "aapl-primary",
+  "company": "Apple Inc.",
+  "version": 1,
+  "claims": [
+    {
+      "claim_id": "services-margin",
+      "statement": "Services mix supports durable consolidated gross margins.",
+      "rationale": "Services historically carries a materially higher gross margin than Products.",
+      "falsifiers": ["Services gross margin materially declines", "Services growth stalls for multiple periods"],
+      "evidence_refs": []
+    },
+    {
+      "claim_id": "greater-china",
+      "statement": "Greater China remains a resilient source of demand.",
+      "rationale": "Regional demand is important to Apple's product scale.",
+      "falsifiers": ["Greater China net sales materially decline because of lower product demand"],
+      "evidence_refs": []
+    },
+    {
+      "claim_id": "supply-resilience",
+      "statement": "Apple can manage component supply concentration without material disruption.",
+      "rationale": "Scale and supplier management can offset some concentration risk.",
+      "falsifiers": ["A single-source component causes material production disruption"],
+      "evidence_refs": []
+    }
+  ]
+}

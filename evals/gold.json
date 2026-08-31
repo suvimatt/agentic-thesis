@@ -1,0 +1,27 @@
+[
+  {
+    "query": "Why did Greater China sales decline?",
+    "gold_chunk_id": "aapl-2024:0c86bf1fa9ba6c00",
+    "anchor": "Greater China net sales decreased"
+  },
+  {
+    "query": "How did Products and Services gross margin percentages compare in 2024?",
+    "gold_chunk_id": "aapl-2024:a12c539482a401f6",
+    "anchor": "Services 73.9 %"
+  },
+  {
+    "query": "What risk comes from components obtained from single or limited sources?",
+    "gold_chunk_id": "aapl-2024:7fae32d7c33baa20",
+    "anchor": "certain components are currently obtained from single or limited sources"
+  },
+  {
+    "query": "How did Mac sales change?",
+    "gold_chunk_id": "aapl-2024:0c86bf1fa9ba6c00",
+    "anchor": "Mac net sales increased during 2024"
+  },
+  {
+    "query": "What competitive pressure affects the active device base?",
+    "gold_chunk_id": "aapl-2024:fb837202fcc36dc0",
+    "anchor": "installed base of active devices"
+  }
+]

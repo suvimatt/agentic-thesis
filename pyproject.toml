@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agentic-thesis"
+version = "0.1.0"
+description = "A stateful RAG system for reviewing how disclosures change an investment thesis."
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.116,<1",
+  "langgraph>=0.6,<2",
+  "langgraph-checkpoint-sqlite>=2,<4",
+  "openai>=1.100,<2",
+  "pydantic>=2.11,<3",
+  "qdrant-client>=1.15,<2",
+  "rank-bm25>=0.2.2,<1",
+  "tiktoken>=0.11,<1",
+  "uvicorn>=0.35,<1",
+]
+
+[project.optional-dependencies]
+test = [
+  "httpx>=0.28,<1",
+  "pytest>=8.4,<10",
+  "pytest-asyncio>=1,<2",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.setuptools.packages.find]
+where = ["src"]

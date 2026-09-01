@@ -24,6 +24,7 @@ class StartRun(BaseModel):
 
 
 def _public_state(run_id: str, state: dict) -> dict:
+    timings = state.get("timings_ms", {})
     return jsonable_encoder(
         {
             "run_id": run_id,
@@ -31,7 +32,9 @@ def _public_state(run_id: str, state: dict) -> dict:
             "thesis": state.get("thesis"),
             "delta": state.get("delta"),
             "evidence_packs": state.get("evidence_packs", []),
-            "timings_ms": state.get("timings_ms", {}),
+            "timings_ms": timings,
+            "retrieval_timings_ms": state.get("retrieval_timings_ms", {}),
+            "total_ms": round(sum(timings.values()), 3),
             "error": state.get("error"),
         }
     )
@@ -90,9 +93,10 @@ def create_app(workflow: AgenticThesisWorkflow | None = None) -> FastAPI:
         if workflow is None:
             app.state.workflow, app.state.thesis, app.state.chunks = await _default_workflow()
         yield
-        for task in app.state.run_tasks.values():
-            if not task.done():
-                task.cancel()
+        pending = [task for task in app.state.run_tasks.values() if not task.done()]
+        for task in pending:
+            task.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)
         if workflow is None:
             await app.state.workflow.close()
 
@@ -131,8 +135,17 @@ def create_app(workflow: AgenticThesisWorkflow | None = None) -> FastAPI:
                         "node": node,
                         "status": "running",
                         "latency_ms": payload.get("timings_ms", {}).get(node),
+                        "total_ms": round(sum(payload.get("timings_ms", {}).values()), 3),
                         "error": None,
                     }
+                    if node == "retrieve_claims":
+                        event["claims"] = [
+                            {"claim_id": claim_id, **timings}
+                            for claim_id, timings in payload.get(
+                                "retrieval_timings_ms",
+                                {},
+                            ).items()
+                        ]
                     if node == "build_evidence_packs":
                         event["claims"] = [
                             {

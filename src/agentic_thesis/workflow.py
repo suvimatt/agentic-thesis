@@ -82,8 +82,12 @@ class AgenticThesisWorkflow:
         )
         return {
             "retrieved": {
-                claim.claim_id: [hit.chunk.chunk_id for hit in hits]
-                for claim, hits in zip(state.thesis.claims, results, strict=True)
+                claim.claim_id: [hit.chunk.chunk_id for hit in result[0]]
+                for claim, result in zip(state.thesis.claims, results, strict=True)
+            },
+            "retrieval_timings_ms": {
+                claim.claim_id: result[1]
+                for claim, result in zip(state.thesis.claims, results, strict=True)
             },
             "timings_ms": self._timings(state, "retrieve_claims", started),
         }
@@ -92,9 +96,12 @@ class AgenticThesisWorkflow:
     def _timings(state: ResearchState, node: str, started: float) -> dict[str, float]:
         return {**state.timings_ms, node: round((perf_counter() - started) * 1_000, 3)}
 
-    async def _search(self, query: str) -> list[RetrievalHit]:
+    async def _search(
+        self,
+        query: str,
+    ) -> tuple[list[RetrievalHit], dict[str, float]]:
         async with self.model_calls, asyncio.timeout(45):
-            return await self.retriever.search(query, mode="rerank", limit=6)
+            return await self.retriever.search_with_timings(query, limit=6)
 
     async def _build_evidence_packs(self, state: ResearchState) -> dict[str, Any]:
         started = perf_counter()

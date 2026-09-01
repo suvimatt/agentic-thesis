@@ -1,5 +1,5 @@
 {
-  "run_at": "2026-08-31T13:55:08.612147+00:00",
+  "run_at": "2026-09-01T04:18:59.991290+00:00",
   "models": {
     "embedding": "qwen3.7-text-embedding",
     "analysis_and_rerank": "gpt-5.6-luna"
@@ -11,19 +11,41 @@
     "hybrid": 1.0,
     "rerank": 1.0
   },
+  "rerank_gold_position": {
+    "Why did Greater China sales decline?": {
+      "hybrid": 2,
+      "rerank": 2
+    },
+    "How did Products and Services gross margin percentages compare in 2024?": {
+      "hybrid": 1,
+      "rerank": 1
+    },
+    "What risk comes from components obtained from single or limited sources?": {
+      "hybrid": 2,
+      "rerank": 2
+    },
+    "How did Mac sales change?": {
+      "hybrid": 4,
+      "rerank": 5
+    },
+    "What competitive pressure affects the active device base?": {
+      "hybrid": 3,
+      "rerank": 3
+    }
+  },
   "gold_retention": {
     "retained": 5,
     "total": 5
   },
   "timings_ms": {
-    "embedding_index": 8932.8,
+    "embedding_index": 8730.5,
     "retrieval_by_mode": {
-      "bm25": 1.8,
-      "vector": 608.3,
-      "hybrid": 668.3,
-      "rerank": 36223.6
+      "bm25": 1.7,
+      "vector": 968.1,
+      "hybrid": 719.2,
+      "rerank": 38169.5
     },
-    "structured_analysis": 18207.4
+    "structured_analysis": 16178.0
   },
   "evidence_pack_tokens": {
     "services-margin": {
@@ -31,7 +53,7 @@
       "after": 1799
     },
     "greater-china": {
-      "before": 3012,
+      "before": 3009,
       "after": 2000
     },
     "supply-resilience": {
@@ -45,7 +67,7 @@
       {
         "claim_id": "services-margin",
         "status": "supported",
-        "explanation": "Supported by Services gross margins of 73.9% in 2024 versus 37.2% for Products, with Services gross margin increasing from $60.3 billion in 2023 to $71.1 billion in 2024. Services net sales also grew 13% in 2024. However, the 2023 filing records a year-over-year decline in Services gross-margin percentage and notes that future margins are subject to volatility and downward pressure.",
+        "explanation": "Supported by Services gross margin of 73.9% in 2024 versus Products gross margin of 37.2%, alongside Services net-sales growth of 13%. However, Services gross-margin percentage declined in 2023 and Apple states that future gross margins may face volatility and downward pressure.",
         "evidence_ids": [
           "e:aapl-2024:a12c539482a401f6",
           "e:aapl-2023:92db73f1562f0086"
@@ -55,7 +77,7 @@
       {
         "claim_id": "greater-china",
         "status": "possibly_invalidated",
-        "explanation": "Greater China net sales declined 2% in 2023 and a further 8% in 2024. The 2024 filing attributes the latest decline primarily to lower iPhone and iPad sales, directly weakening the claim that the region remains a resilient source of demand.",
+        "explanation": "Greater China net sales declined 2% in 2023 and 8% in 2024. The 2024 filing attributes the latest decline primarily to lower iPhone and iPad sales, which is directly inconsistent with the claim that the region remains a resilient source of demand.",
         "evidence_ids": [
           "e:aapl-2024:0c86bf1fa9ba6c00",
           "e:aapl-2023:bd8f740a12874fae"
@@ -65,12 +87,11 @@
       {
         "claim_id": "supply-resilience",
         "status": "weakened",
-        "explanation": "Weakened by Apple's disclosures that certain components come from single or limited sources, that manufacturing is concentrated among a small number of outsourcing partners, and that delays or constraints have previously adversely affected the business. The evidence establishes material exposure and risk but does not document a specific recent single-source component disruption that would fully match the stated falsifier.",
+        "explanation": "The evidence does not establish that Apple can manage concentration risk without material disruption. Apple discloses that some components come from single or limited sources, that custom components may have only one source, and that delays or constraints have adversely affected the business in the past and could materially affect results in the future. This weakens the claim, but no supplied evidence clearly matches the specific falsifier of a current material production disruption caused by a single-source component.",
         "evidence_ids": [
           "e:aapl-2024:7fae32d7c33baa20",
           "e:aapl-2024:b000c39d74a9e72b",
-          "e:aapl-2024:d892f9d9c2cd9230",
-          "e:aapl-2023:4bdf715edad6f3d3"
+          "e:aapl-2024:d892f9d9c2cd9230"
         ],
         "matched_falsifier": null
       }

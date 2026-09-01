@@ -6,6 +6,7 @@ from collections import defaultdict
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from html.parser import HTMLParser
+from time import perf_counter
 from typing import Literal
 
 from openai import AsyncOpenAI
@@ -244,6 +245,8 @@ class HybridRetriever:
         mode: Literal["bm25", "vector", "hybrid", "rerank"] = "rerank",
         limit: int = 5,
     ) -> list[RetrievalHit]:
+        if mode == "rerank":
+            return (await self.search_with_timings(query, limit=limit))[0]
         bm25_ids = self._bm25_ids(query)
         if mode == "bm25":
             ranked = [(chunk_id, float(len(bm25_ids) - rank)) for rank, chunk_id in enumerate(bm25_ids)]
@@ -253,17 +256,39 @@ class HybridRetriever:
             ranked = [(chunk_id, float(len(vector_ids) - rank)) for rank, chunk_id in enumerate(vector_ids)]
         else:
             ranked = self.rrf([bm25_ids, vector_ids])
-            if mode == "rerank":
-                ordered = await self.rerank(query, [self.by_id[chunk_id] for chunk_id, _ in ranked])
-                known = [chunk_id for chunk_id in ordered if chunk_id in dict(ranked)]
-                missing = [chunk_id for chunk_id, _ in ranked if chunk_id not in known]
-                ranked = [(chunk_id, float(len(known + missing) - rank)) for rank, chunk_id in enumerate(known + missing)]
         return [RetrievalHit(self.by_id[chunk_id], score) for chunk_id, score in ranked[:limit]]
+
+    async def search_with_timings(
+        self,
+        query: str,
+        *,
+        limit: int = 5,
+    ) -> tuple[list[RetrievalHit], dict[str, float]]:
+        started = perf_counter()
+        ranked = self.rrf([self._bm25_ids(query), await self._vector_ids(query)])
+        retrieval_ms = round((perf_counter() - started) * 1_000, 3)
+        started = perf_counter()
+        ordered = await self.rerank(query, [self.by_id[chunk_id] for chunk_id, _ in ranked])
+        known = [chunk_id for chunk_id in ordered if chunk_id in dict(ranked)]
+        missing = [chunk_id for chunk_id, _ in ranked if chunk_id not in known]
+        ids = known + missing
+        hits = [
+            RetrievalHit(self.by_id[chunk_id], float(len(ids) - rank))
+            for rank, chunk_id in enumerate(ids[:limit])
+        ]
+        return hits, {
+            "retrieval_ms": retrieval_ms,
+            "rerank_ms": round((perf_counter() - started) * 1_000, 3),
+        }
 
 
 def recall_at_k(results: dict[str, list[str]], gold: dict[str, str], k: int) -> float:
     hits = sum(gold_id in results.get(query, [])[:k] for query, gold_id in gold.items())
     return hits / len(gold) if gold else 0.0
+
+
+def gold_rank(ranking: list[str], gold_id: str) -> int | None:
+    return ranking.index(gold_id) + 1 if gold_id in ranking else None
 
 
 def _trim_extractively(text: str, query: str, max_tokens: int) -> str:

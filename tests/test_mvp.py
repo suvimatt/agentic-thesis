@@ -1,3 +1,4 @@
+import asyncio
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -21,6 +22,7 @@ from agentic_thesis.rag import (
     build_evidence_pack,
     chunk_filing,
     enforce_citations,
+    gold_rank,
     recall_at_k,
 )
 from agentic_thesis.workflow import AgenticThesisWorkflow
@@ -43,6 +45,11 @@ def test_fixed_sec_filings_exist() -> None:
     root = Path(__file__).parents[1]
     assert (root / "data/filings/aapl-2023-10-k.html").stat().st_size > 1_000_000
     assert (root / "data/filings/aapl-2024-10-k.html").stat().st_size > 1_000_000
+
+
+def test_gold_rank_reports_one_based_position_or_missing() -> None:
+    assert gold_rank(["distractor", "gold", "other"], "gold") == 2
+    assert gold_rank(["distractor", "other"], "gold") is None
 
 
 async def test_hybrid_retrieval_reports_measured_recall_at_5() -> None:
@@ -233,6 +240,64 @@ async def test_embedding_requests_use_the_separate_embedding_client() -> None:
     assert await model.embed(["Apple services"]) == [[0.25, 0.75]]
 
 
+async def test_app_shutdown_waits_for_inflight_run_cancellation(tmp_path: Path) -> None:
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+    thesis = ThesisSnapshot(
+        thesis_id="shutdown-test",
+        company="Apple Inc.",
+        version=1,
+        claims=[
+            ThesisClaim(
+                claim_id="services-margin",
+                statement="Services mix supports margins.",
+                rationale="Services has higher margins.",
+            )
+        ],
+    )
+    chunks = [
+        DisclosureChunk(
+            chunk_id="new",
+            accession="new",
+            filing_date="2024-09-28",
+            section="Gross Margin",
+            text="Services gross margin was 73.9 percent.",
+            start_char=0,
+            end_char=40,
+        )
+    ]
+
+    class BlockingRetriever:
+        async def search_with_timings(self, query: str, *, limit: int):
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+
+    async def analyze(snapshot: ThesisSnapshot, packs: list) -> ThesisDelta:
+        raise AssertionError("analysis should not run before cancellation")
+
+    workflow = await AgenticThesisWorkflow.create(
+        tmp_path / "shutdown.sqlite",
+        BlockingRetriever(),
+        analyze,
+    )
+    app = create_app(workflow)
+    app.state.thesis = thesis
+    app.state.chunks = chunks
+    async with app.router.lifespan_context(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/runs", json={"run_id": "shutdown-run"})
+            assert response.status_code == 202
+            await started.wait()
+
+    assert cancelled.is_set()
+    assert app.state.run_tasks["shutdown-run"].done()
+    await workflow.close()
+
+
 async def test_langgraph_resumes_after_restart_and_rejects_stale_commit(tmp_path: Path) -> None:
     thesis = ThesisSnapshot(
         thesis_id="aapl-primary",
@@ -262,6 +327,17 @@ async def test_langgraph_resumes_after_restart_and_rejects_stale_commit(tmp_path
     class FakeRetriever:
         async def search(self, query: str, *, mode: str, limit: int) -> list[RetrievalHit]:
             return [RetrievalHit(chunks[0], 1.0)]
+
+        async def search_with_timings(
+            self,
+            query: str,
+            *,
+            limit: int,
+        ) -> tuple[list[RetrievalHit], dict[str, float]]:
+            return [RetrievalHit(chunks[0], 1.0)], {
+                "retrieval_ms": 1.25,
+                "rerank_ms": 2.5,
+            }
 
     async def analyze(snapshot: ThesisSnapshot, packs: list) -> ThesisDelta:
         if snapshot.thesis_id == "aapl-error":
@@ -326,6 +402,9 @@ async def test_langgraph_resumes_after_restart_and_rejects_stale_commit(tmp_path
         events = await client.get("/runs/api-run/events")
         assert events.headers["content-type"].startswith("text/event-stream")
         assert '"node": "retrieve_claims"' in events.text
+        assert '"retrieval_ms": 1.25' in events.text
+        assert '"rerank_ms": 2.5' in events.text
+        assert '"total_ms":' in events.text
         assert '"tokens_after"' in events.text
         assert '"status": "awaiting_review"' in events.text
         assert (await client.get("/runs/api-run")).json()["status"] == "awaiting_review"

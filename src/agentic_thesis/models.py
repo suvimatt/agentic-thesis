@@ -82,6 +82,7 @@ class ResearchState(BaseModel):
     thesis: ThesisSnapshot
     chunks: list[DisclosureChunk] = Field(default_factory=list)
     retrieved: dict[str, list[str]] = Field(default_factory=dict)
+    retrieval_timings_ms: dict[str, dict[str, float]] = Field(default_factory=dict)
     evidence_packs: list[EvidencePack] = Field(default_factory=list)
     delta: ThesisDelta | None = None
     review: ReviewDecision | None = None

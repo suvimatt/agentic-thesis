@@ -15,6 +15,7 @@ from agentic_thesis.rag import (
     build_evidence_pack,
     chunk_filing,
     enforce_citations,
+    gold_rank,
     recall_at_k,
 )
 
@@ -78,7 +79,11 @@ async def main() -> None:
         results[mode] = {
             query: [
                 hit.chunk.chunk_id
-                for hit in await retriever.search(query, mode=mode, limit=5)
+                for hit in await retriever.search(
+                    query,
+                    mode=mode,
+                    limit=8 if mode in {"hybrid", "rerank"} else 5,
+                )
             ]
             for query in gold
         }
@@ -126,6 +131,13 @@ async def main() -> None:
         "recall_at_5": {
             mode: recall_at_k(mode_results, gold, 5)
             for mode, mode_results in results.items()
+        },
+        "rerank_gold_position": {
+            query: {
+                "hybrid": gold_rank(results["hybrid"][query], gold_id),
+                "rerank": gold_rank(results["rerank"][query], gold_id),
+            }
+            for query, gold_id in gold.items()
         },
         "gold_retention": {"retained": retained, "total": len(cases)},
         "timings_ms": {

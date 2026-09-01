@@ -1,10 +1,107 @@
-# AgenticThesis
+<h1 align="center">AgenticThesis</h1>
 
-**A stateful RAG system that detects how new company disclosures support, weaken, or possibly invalidate an investor's existing thesis.**
+<p align="center">
+  <a href="README.md">English</a> | <a href="README_ZH.md">简体中文</a>
+</p>
 
-Most filing assistants summarize one document once. AgenticThesis instead compares a new disclosure with three versioned thesis claims, produces claim-level cited changes, pauses for Human Review, survives restart, and refuses to overwrite a newer thesis version.
+<p align="center">
+  <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white" alt="Python 3.11+"></a>
+  <a href="https://github.com/langchain-ai/langgraph"><img src="https://img.shields.io/badge/LangGraph-Stateful%20Workflow-1C3C3C" alt="LangGraph"></a>
+  <a href="https://fastapi.tiangolo.com/"><img src="https://img.shields.io/badge/FastAPI-Async%20API-009688?logo=fastapi&logoColor=white" alt="FastAPI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0-blue.svg" alt="GPL-3.0 license"></a>
+  <a href="https://github.com/suvimatt/agentic-thesis/stargazers"><img src="https://img.shields.io/github/stars/suvimatt/agentic-thesis?style=social" alt="GitHub stars"></a>
+</p>
 
-AgenticThesis is an evidence-first investment research system. It helps investors maintain a versioned thesis and review how new disclosures change its supporting evidence. Investment judgment remains with the user; the system does not issue Buy / Sell / Hold recommendations.
+<h2 align="center">🚀 Stateful RAG for evidence-first investment thesis monitoring</h2>
+
+AgenticThesis detects how new company disclosures support, weaken, or possibly invalidate an investor's existing thesis. Instead of summarizing one filing once, it produces claim-level cited changes, pauses for Human Review, survives restart, and refuses to overwrite a newer thesis version.
+
+Investment judgment remains with the user. AgenticThesis does not issue Buy / Sell / Hold recommendations.
+
+If this project helps you build more reliable AI research systems, please consider giving it a star. It helps others discover the project and supports further development.
+
+<p align="center">
+  <a href="https://github.com/suvimatt/agentic-thesis">
+    <img src="https://img.shields.io/badge/%E2%AD%90-Give%20AgenticThesis%20a%20Star-yellow?style=for-the-badge&logo=github" alt="Give AgenticThesis a Star">
+  </a>
+</p>
+
+## Table of Contents
+
+- [🚀 Quick Start](#-quick-start)
+- [Why AgenticThesis](#why-agenticthesis)
+- [Investment Philosophy → Engineering Decisions](#investment-philosophy)
+- [How It Works](#how-it-works)
+- [Architecture](#architecture)
+- [Implemented Capabilities](#implemented-capabilities)
+- [Verified Results](#verified-results)
+- [API Usage](#api-usage)
+- [90-Second Verification](#90-second-verification)
+- [Deliberate Limits](#deliberate-limits)
+- [License](#license)
+
+## 🚀 Quick Start
+
+### 1. Install
+
+Python 3.11+ is required.
+
+```bash
+git clone https://github.com/suvimatt/agentic-thesis.git
+cd agentic-thesis
+python3 -m venv .venv
+.venv/bin/python -m pip install -e '.[test]'
+```
+
+### 2. Configure model endpoints
+
+```bash
+cp .env.example .env
+```
+
+Set these values in `.env`:
+
+| Variable | Purpose |
+| --- | --- |
+| `OPENAI_API_KEY` | API key for reranking and structured thesis analysis |
+| `OPENAI_BASE_URL` | OpenAI-compatible endpoint for the reasoning model |
+| `AGENTIC_THESIS_MODEL` | Reasoning model name |
+| `EMBEDDING_API_KEY` | API key for the embedding endpoint |
+| `EMBEDDING_BASE_URL` | OpenAI-compatible embedding endpoint |
+| `AGENTIC_THESIS_EMBEDDING_MODEL` | Embedding model name |
+
+### 3. Start the application
+
+```bash
+.venv/bin/uvicorn agentic_thesis.api:app --env-file .env --port 8000
+```
+
+Open [http://127.0.0.1:8000](http://127.0.0.1:8000). Startup indexes the two checked-in Apple filings; the product page then walks through filing retrieval, evidence comparison, and Human Review.
+
+### 4. Verify the deterministic path
+
+```bash
+.venv/bin/pytest -q -p no:cacheprovider
+```
+
+The test suite uses deterministic retrieval and model substitutes where appropriate, so the core state guarantees can be verified without calling an external model.
+
+## Why AgenticThesis
+
+Most filing assistants answer: *What does this document say?*
+
+AgenticThesis answers a harder, stateful question: *How does this new evidence change what I already believe about the company?*
+
+| One-shot filing assistant | AgenticThesis |
+| --- | --- |
+| Summarizes one document | Compares new disclosures with a versioned thesis |
+| Produces free-form prose | Produces a typed, claim-level `ThesisDelta` |
+| Treats chat history as memory | Stores immutable `ThesisSnapshot` versions |
+| May return unsupported conclusions | Validates every cited quote against its source |
+| Finishes after generation | Requires Human Review before authoritative state changes |
+| Restarts from the beginning | Resumes from a SQLite checkpoint |
+
+<a id="investment-philosophy"></a>
 
 ## Investment Philosophy → Engineering Decisions
 
@@ -15,6 +112,21 @@ AgenticThesis turns Duan Yongping's "do not invest unless you understand the bus
 - the system never issues Buy / Sell / Hold recommendations;
 - the user owns the thesis and the final investment judgment;
 - new evidence produces only a reviewable `ThesisDelta` proposal; the authoritative `ThesisSnapshot` changes only after explicit Human Review.
+
+## How It Works
+
+```text
+ThesisSnapshot v1
+→ hybrid retrieval over baseline and new filings
+→ token-budgeted EvidencePack per claim
+→ structured ThesisDelta
+→ citation and falsifier validation
+→ Human Review
+→ compare-and-swap commit
+→ ThesisSnapshot v2 or version_conflict
+```
+
+Each claim receives one of four states: `supported`, `weakened`, `possibly_invalidated`, or `unknown`.
 
 ## Architecture
 
@@ -36,7 +148,7 @@ The two checked-in SEC filings contain 97,675 `cl100k_base` tokens after determi
 
 The editable diagram source is [`docs/agentic-thesis-architecture.html`](docs/agentic-thesis-architecture.html); the README renders its exported SVG.
 
-## What is implemented
+## Implemented Capabilities
 
 - deterministic SEC HTML extraction, fixed-size chunks with section metadata, character offsets, and stable chunk IDs;
 - BM25 + Qdrant local vector retrieval, Reciprocal Rank Fusion, and listwise OpenAI API reranking;
@@ -48,15 +160,7 @@ The editable diagram source is [`docs/agentic-thesis-architecture.html`](docs/ag
 - async FastAPI, background runs, bounded/timeout-wrapped model calls, cancellation-safe shutdown, and live LangGraph SSE events with per-claim retrieval/rerank, LLM-node, and cumulative timings but no chain-of-thought;
 - a dependency-free product page for progress, claim deltas, citations, Context compression, and Human Review.
 
-## Reproduce the verified path
-
-Python 3.11+ is required.
-
-```bash
-python3 -m venv .venv
-.venv/bin/python -m pip install -e '.[test]'
-.venv/bin/pytest -q -p no:cacheprovider
-```
+## Verified Results
 
 Observed on the checked-in fixtures on 2026-09-01:
 
@@ -90,16 +194,6 @@ The checked-in `evals/live_results.json` records a real API run over both filing
 
 The reranker preserved Recall@5 but did not improve gold position on this five-query set; one case moved from rank 4 to rank 5. These timings are one measured evaluation run, not a latency benchmark or production SLO.
 
-## Run locally
-
-```bash
-cp .env.example .env
-# Set the API endpoints, models, and keys in .env, then:
-.venv/bin/uvicorn agentic_thesis.api:app --env-file .env --port 8000
-```
-
-Open `http://127.0.0.1:8000` for the product page. Startup indexes the two fixed filings through the configured embedding endpoint. The same workflow can be driven through the API.
-
 Run the live embedding, rerank, Context compression, and Structured Outputs evaluation with:
 
 ```bash
@@ -107,6 +201,8 @@ Run the live embedding, rerank, Context compression, and Structured Outputs eval
 ```
 
 The measured report is written to `evals/live_results.json`; it never contains the API key.
+
+## API Usage
 
 Start and review a run through the API:
 
@@ -124,7 +220,7 @@ curl -X POST http://localhost:8000/runs/aapl-2024-review/review \
 
 Other endpoints are `GET /runs/{run_id}` and the generated `/docs` OpenAPI page.
 
-## 90-second interview verification
+## 90-Second Verification
 
 Use the product page for the normal filing → evidence → review path. Then run the single deterministic scenario that proves the two state guarantees that are awkward to stage manually:
 
@@ -141,3 +237,7 @@ That scenario pauses a run at Human Review, closes and recreates the workflow on
 - Qdrant currently runs in-process; SQLite persists workflow and thesis state;
 - no portfolio management, valuation, Multi-Agent roles, scheduler, or distributed queue;
 - the five-query eval is intentionally small; no measured cost, throughput, p50, p95, or production-readiness claim.
+
+## License
+
+AgenticThesis is licensed under the [GNU General Public License v3.0](LICENSE).

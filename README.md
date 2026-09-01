@@ -6,35 +6,25 @@ Most filing assistants summarize one document once. AgenticThesis instead compar
 
 AgenticThesis is an evidence-first investment research system. It helps investors maintain a versioned thesis and review how new disclosures change its supporting evidence. Investment judgment remains with the user; the system does not issue Buy / Sell / Hold recommendations.
 
-## Current workflow
+## Architecture
 
-```text
-Apple ThesisSnapshot v1
-+ 2023 baseline 10-K
-+ 2024 new 10-K
-→ Hybrid Retrieval
-→ token-budgeted EvidencePack per claim
-→ structured ThesisDelta
-→ citation validation
-→ Human Review interrupt
-→ compare-and-swap ThesisSnapshot v2 or version_conflict
-```
+[![AgenticThesis system architecture](docs/agentic-thesis-architecture.svg)](docs/agentic-thesis-architecture.html)
 
-The two checked-in SEC filings contain 97,675 `cl100k_base` tokens after deterministic HTML extraction. Each model call receives only a cited, extractively compressed EvidencePack rather than the full filings.
+The system has one application-owned workflow, not a collection of autonomous agents. LangGraph coordinates six explicit state transitions; deterministic code owns retrieval fusion, Context budgeting, citation integrity, and version commits, while the LLM is limited to semantic reranking and structured thesis comparison.
 
-```mermaid
-flowchart LR
-    A[Versioned Thesis] --> R[BM25 + Qdrant vector]
-    F[Fixed SEC filings] --> R
-    R --> X[RRF + API rerank]
-    X --> P[Token-budgeted EvidencePacks]
-    P --> D[Structured ThesisDelta]
-    D --> V[Citation validator]
-    V --> H[LangGraph Human Review]
-    H --> C{Version still current?}
-    C -->|yes| N[Immutable v2]
-    C -->|no| E[HTTP 409 conflict]
-```
+| Boundary | Responsibility | Implementation |
+| --- | --- | --- |
+| Interface | Start work asynchronously, stream progress, expose state, and accept one review decision | FastAPI, background `asyncio` task, SSE, four endpoints |
+| Retrieval | Find claim-relevant passages across the filing corpus | deterministic chunks, BM25, Qdrant local vectors, RRF, API rerank |
+| Working Context | Give each claim the smallest sufficient, source-addressable evidence | extractive `EvidencePack`, 2,000-token budget, evidence IDs and source offsets |
+| Semantic analysis | Compare every thesis claim with supplied evidence only | API Structured Outputs → typed `ThesisDelta` |
+| Integrity gates | Prevent unsupported conclusions or unsafe state changes | quote/source validation, falsifier validation, exact-claim validation, Human Review |
+| Durable state | Resume a paused run and preserve authoritative thesis history | LangGraph SQLite checkpoints, immutable `ThesisSnapshot`s, thesis head |
+| Commit | Apply an approved delta only if its base version is still current | SQLite compare-and-swap → `vN+1` or `version_conflict` |
+
+The two checked-in SEC filings contain 97,675 `cl100k_base` tokens after deterministic HTML extraction. A model call never receives the full filings: it receives a per-claim, cited `EvidencePack`. This keeps **Context** (temporary working evidence), **Memory** (versioned thesis), and **Workflow State** (resumable execution) separate.
+
+The editable diagram source is [`docs/agentic-thesis-architecture.html`](docs/agentic-thesis-architecture.html); the README renders its exported SVG.
 
 ## What is implemented
 

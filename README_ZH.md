@@ -14,7 +14,7 @@
 
 <h2 align="center">🚀 基于证据、持续维护投资 Thesis 的有状态 RAG 系统</h2>
 
-AgenticThesis 判断一家公司的新披露如何支持、削弱或可能推翻投资者已有的 Thesis。它不是一次性总结一份文件，而是生成带原文引用的逐条判断变化，在 Human Review 处暂停，支持重启后继续，并阻止旧任务覆盖更新版本的 Thesis。
+AgenticThesis 判断一家公司的新披露如何支持、削弱或可能推翻投资者已有的 Thesis。材料既可以手工导入，也可以按指定类型监控 SEC EDGAR Filing。系统生成带原文引用的逐条判断变化，在 Human Review 处暂停，支持重启后继续，并阻止旧任务覆盖更新版本的 Thesis。
 
 投资判断始终归用户所有。AgenticThesis 不输出 Buy / Sell / Hold 建议。
 
@@ -61,6 +61,13 @@ $EDITOR ~/.agentic-thesis/.env
 | `EMBEDDING_API_KEY` | Embedding 端点的 API Key |
 | `EMBEDDING_BASE_URL` | OpenAI 兼容的 Embedding 端点 |
 | `AGENTIC_THESIS_EMBEDDING_MODEL` | Embedding 模型名称 |
+| `AGENTIC_THESIS_SEC_USER_AGENT` | 产品/姓名和联系邮箱；仅 SEC 自动监控需要 |
+
+SEC 要求自动访问程序声明可识别的操作者。例如：
+
+```dotenv
+AGENTIC_THESIS_SEC_USER_AGENT="AgenticThesis your-email@example.com"
+```
 
 ### 2. 启动应用
 
@@ -112,7 +119,9 @@ AgenticThesis 把段永平“不懂不投”的原则落实为系统边界，而
 ## 运行流程
 
 ```text
-ThesisSnapshot v1
+手工 disclosure 或定时检查 SEC submissions
+→ 按 accession/content 去重并持久化 Filing
+→ ThesisSnapshot v1
 → 在基准 Filing 和新 Filing 上执行混合检索
 → 为每条 claim 构建受 token budget 约束的 EvidencePack
 → 生成结构化 ThesisDelta
@@ -132,7 +141,7 @@ ThesisSnapshot v1
 
 | 边界 | 职责 | 实现 |
 | --- | --- | --- |
-| 接口 | 管理 theses 和 disclosures、异步启动任务、重放进度并接受审核决定 | FastAPI、后台 `asyncio` tasks、durable SSE |
+| 接口 | 管理 theses 和 disclosures、检查指定 SEC filing types、异步启动任务、重放进度并接受审核决定 | FastAPI、后台 `asyncio` tasks、durable SSE |
 | 检索 | 在 Filing 语料中找到与 claim 相关的段落 | 确定性固定长度切块及 section 标签、BM25、进程内 Qdrant vector、RRF、API rerank |
 | Working Context | 为每条 claim 提供最小、充分、可定位来源的证据 | query-conditioned extractive `EvidencePack`、每条 claim 固定 2,000-token 预算、evidence ID 和原文偏移 |
 | 语义分析 | 只根据提供的证据比较每条 Thesis claim | API Structured Outputs → 类型化 `ThesisDelta` |
@@ -155,6 +164,7 @@ ThesisSnapshot v1
 - 不可变 Thesis snapshot 和 compare-and-swap 冲突保护；
 - 可持久化的 run history，以及通过 `Last-Event-ID` 跨浏览器或服务重启重放的顺序化 SSE；
 - 多个相互隔离的 theses，以及手工 HTML/TXT disclosure 导入；
+- 每个 thesis 一个官方 SEC EDGAR monitor，可选择 filing types，按 accession/content 去重，支持手工 sync 和持久化的每日收集 schedule；
 - 异步 FastAPI、后台任务、有界且带 timeout 的模型调用、停止服务后的 checkpoint 恢复，以及不暴露 chain-of-thought 的实时 LangGraph events；
 - 无前端依赖的产品页面，支持 thesis/disclosure 管理、进度、引用、Context 压缩和 Human Review；
 - 可安装的 `agentic-thesis serve` CLI、package sample data 和稳定的用户数据目录。
@@ -165,7 +175,7 @@ ThesisSnapshot v1
 
 | 检查项 | 观测结果 |
 | --- | ---: |
-| 测试 | 12 passed |
+| 测试 | 15 passed |
 | 全新环境 wheel 安装 | 在仓库外验证通过 |
 | 2023 提取 tokens / chunks | 48,923 / 109 |
 | 2024 提取 tokens / chunks | 48,752 / 110 |
@@ -218,6 +228,18 @@ curl -X POST http://localhost:8000/runs/aapl-2024-review/review \
   -d '{"action":"approve"}'
 ```
 
+配置并立即检查 SEC monitor：
+
+```bash
+curl -X PUT http://localhost:8000/theses/aapl-primary/monitor \
+  -H 'content-type: application/json' \
+  -d '{"cik":"320193","forms":["10-K","10-Q","8-K"],"enabled":true}'
+
+curl -X POST http://localhost:8000/theses/aapl-primary/sync
+```
+
+第一次成功检查只导入最新一份符合条件的 Filing，用它建立 cursor，不自动回填全部历史。服务启动时判断是否到期，运行期间每小时只检查一次本地 due state；自动收集只在距离上次成功收集满 24 小时后访问 SEC，“Check SEC now”仍可手工强制检查。失败不会推进成功时间，会在下一次小时检查时重试。没有新 Filing 就不运行 RAG 或 LLM；有新 Filing 才启动 `ThesisDelta` workflow，并停在 Human Review。
+
 浏览器还可以创建和列出 theses、导入和列出 disclosures、查看历史 runs，并重新打开待审核任务。自动生成的 `/docs` 页面记录同一套 HTTP API。
 
 ## 90 秒验证
@@ -233,9 +255,10 @@ curl -X POST http://localhost:8000/runs/aapl-2024-review/review \
 
 ## 明确边界
 
-- 包含 Apple 历史 Filing 样例并支持手工 HTML/TXT 导入；尚无自动 SEC monitoring；
+- 自动 ingestion 有意只支持官方 SEC EDGAR submissions，不做新闻、社交媒体或公司 IR 网站爬虫；
+- scheduler 只是一个每小时判断本地 due state、每 24 小时最多自动成功访问 SEC 一次的进程内 `asyncio` loop，不是分布式任务系统或通知服务；
 - Qdrant 当前运行在进程内；SQLite 持久化 Workflow 和 Thesis 状态；
-- 没有 portfolio management、valuation、Multi-Agent role、scheduler 或 distributed queue；
+- 没有 portfolio management、valuation、Multi-Agent role、distributed scheduler 或 queue；
 - 五条 query 的 eval 有意保持很小；不声称已有成本、throughput、p50、p95 或 production-readiness 数据。
 
 ## 开源协议

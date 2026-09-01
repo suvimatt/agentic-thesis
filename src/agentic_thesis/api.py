@@ -1,17 +1,21 @@
 import asyncio
 import json
 import os
+import urllib.parse
+import urllib.request
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from importlib.resources import files
 from pathlib import Path
+from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import FileResponse, StreamingResponse
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 from agentic_thesis.models import (
     DisclosureChunk,
@@ -28,6 +32,74 @@ class StartRun(BaseModel):
     thesis_id: str | None = None
     thesis: ThesisSnapshot | None = None
     chunks: list[DisclosureChunk] | None = None
+
+
+class SecMonitorInput(BaseModel):
+    cik: str = Field(pattern=r"^\d{1,10}$")
+    forms: list[str] = Field(min_length=1, max_length=20)
+    enabled: bool = True
+
+    @field_validator("cik")
+    @classmethod
+    def normalize_cik(cls, value: str) -> str:
+        return value.zfill(10)
+
+    @field_validator("forms")
+    @classmethod
+    def normalize_forms(cls, values: list[str]) -> list[str]:
+        forms = list(dict.fromkeys(value.strip().upper() for value in values))
+        allowed = set("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-/")
+        if any(
+            not form or len(form) > 20 or not set(form) <= allowed
+            for form in forms
+        ):
+            raise ValueError("filing forms contain invalid characters")
+        return forms
+
+
+class SecEdgarClient:
+    def __init__(self, user_agent: str) -> None:
+        self.user_agent = user_agent
+
+    def _read(self, url: str) -> bytes:
+        request = urllib.request.Request(
+            url,
+            headers={"User-Agent": self.user_agent, "Accept": "application/json,text/html"},
+        )
+        with urllib.request.urlopen(request, timeout=30) as response:
+            content = response.read(10_000_001)
+        if len(content) > 10_000_000:
+            raise ValueError("SEC response exceeds 10 MB")
+        return content
+
+    async def recent_filings(self, cik: str) -> list[dict[str, str]]:
+        payload = json.loads(
+            await asyncio.to_thread(
+                self._read,
+                f"https://data.sec.gov/submissions/CIK{cik}.json",
+            )
+        )
+        recent = payload["filings"]["recent"]
+        return [
+            {
+                "accession": accession,
+                "filing_date": recent["filingDate"][index],
+                "form": recent["form"][index],
+                "primary_document": recent["primaryDocument"][index],
+            }
+            for index, accession in enumerate(recent["accessionNumber"])
+        ]
+
+    async def filing_html(
+        self,
+        cik: str,
+        filing: dict[str, str],
+    ) -> tuple[str, str]:
+        accession = filing["accession"].replace("-", "")
+        document = urllib.parse.quote(filing["primary_document"], safe="")
+        url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession}/{document}"
+        content = await asyncio.to_thread(self._read, url)
+        return content.decode("utf-8", errors="ignore"), url
 
 
 def _public_state(run_id: str, state: dict) -> dict:
@@ -118,18 +190,36 @@ async def _default_workflow() -> tuple[AgenticThesisWorkflow, ThesisSnapshot, li
     return workflow, thesis, chunks
 
 
-def create_app(workflow: AgenticThesisWorkflow | None = None) -> FastAPI:
+def create_app(
+    workflow: AgenticThesisWorkflow | None = None,
+    *,
+    sec_client: Any = None,
+    monitor_interval: float | None = None,
+    collection_interval: float = 86_400,
+) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         if workflow is None:
             app.state.workflow, app.state.thesis, app.state.chunks = await _default_workflow()
+            user_agent = os.getenv("AGENTIC_THESIS_SEC_USER_AGENT")
+            if app.state.sec_client is None and user_agent:
+                app.state.sec_client = SecEdgarClient(user_agent)
+            if app.state.monitor_interval is None:
+                app.state.monitor_interval = float(
+                    os.getenv("AGENTIC_THESIS_SEC_POLL_SECONDS", "3600")
+                )
         for run in await app.state.workflow.list_runs():
             if run["status"] == "running":
                 app.state.run_conditions[run["run_id"]] = asyncio.Condition()
                 app.state.run_tasks[run["run_id"]] = asyncio.create_task(
                     execute_run(run["run_id"], resume=True)
                 )
+        if app.state.monitor_interval is not None:
+            app.state.monitor_task = asyncio.create_task(poll_sec_monitors())
         yield
+        if app.state.monitor_task is not None:
+            app.state.monitor_task.cancel()
+            await asyncio.gather(app.state.monitor_task, return_exceptions=True)
         pending = [task for task in app.state.run_tasks.values() if not task.done()]
         for task in pending:
             task.cancel()
@@ -137,13 +227,17 @@ def create_app(workflow: AgenticThesisWorkflow | None = None) -> FastAPI:
         if workflow is None:
             await app.state.workflow.close()
 
-    app = FastAPI(title="AgenticThesis", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="AgenticThesis", version="0.3.0", lifespan=lifespan)
     if workflow is not None:
         app.state.workflow = workflow
         app.state.thesis = None
         app.state.chunks = None
     app.state.run_tasks = {}
     app.state.run_conditions = {}
+    app.state.sec_client = sec_client
+    app.state.monitor_interval = monitor_interval
+    app.state.collection_interval = collection_interval
+    app.state.monitor_task = None
 
     async def publish(run_id: str, event: dict) -> None:
         event = jsonable_encoder(event)
@@ -220,6 +314,21 @@ def create_app(workflow: AgenticThesisWorkflow | None = None) -> FastAPI:
                 {"node": "workflow", "status": "failed", "error": error},
             )
 
+    async def launch_run(
+        run_id: str,
+        thesis: ThesisSnapshot,
+        chunks: list[DisclosureChunk],
+    ) -> None:
+        existing = app.state.run_tasks.get(run_id)
+        if existing and not existing.done():
+            raise HTTPException(status_code=409, detail="run is already active")
+        app.state.run_conditions[run_id] = asyncio.Condition()
+        if not await app.state.workflow.register_run(run_id, thesis):
+            raise HTTPException(status_code=409, detail="run already exists")
+        app.state.run_tasks[run_id] = asyncio.create_task(
+            execute_run(run_id, thesis, chunks)
+        )
+
     @app.get("/", response_class=FileResponse)
     async def product_page() -> FileResponse:
         return FileResponse(Path(__file__).with_name("index.html"))
@@ -240,15 +349,7 @@ def create_app(workflow: AgenticThesisWorkflow | None = None) -> FastAPI:
             chunks = request.chunks or app.state.chunks
         if thesis is None or chunks is None:
             raise HTTPException(status_code=422, detail="thesis and chunks are required")
-        existing = app.state.run_tasks.get(request.run_id)
-        if existing and not existing.done():
-            raise HTTPException(status_code=409, detail="run is already active")
-        app.state.run_conditions[request.run_id] = asyncio.Condition()
-        if not await app.state.workflow.register_run(request.run_id, thesis):
-            raise HTTPException(status_code=409, detail="run already exists")
-        app.state.run_tasks[request.run_id] = asyncio.create_task(
-            execute_run(request.run_id, thesis, chunks)
-        )
+        await launch_run(request.run_id, thesis, chunks)
         return {"run_id": request.run_id, "status": "running"}
 
     @app.get("/theses")
@@ -269,6 +370,117 @@ def create_app(workflow: AgenticThesisWorkflow | None = None) -> FastAPI:
         if thesis is None:
             raise HTTPException(status_code=404, detail="thesis not found")
         return thesis
+
+    @app.get("/monitors")
+    async def list_monitors() -> list[dict]:
+        return await app.state.workflow.list_sec_monitors()
+
+    @app.put("/theses/{thesis_id}/monitor")
+    async def configure_monitor(thesis_id: str, request: SecMonitorInput) -> dict:
+        if await app.state.workflow.get_thesis(thesis_id) is None:
+            raise HTTPException(status_code=404, detail="thesis not found")
+        return await app.state.workflow.configure_sec_monitor(
+            thesis_id,
+            request.cik,
+            request.forms,
+            request.enabled,
+        )
+
+    async def sync_sec_monitor(thesis_id: str) -> dict:
+        monitor = await app.state.workflow.get_sec_monitor(thesis_id)
+        if monitor is None:
+            raise HTTPException(status_code=404, detail="SEC monitor not configured")
+        if not monitor["enabled"]:
+            raise HTTPException(status_code=409, detail="SEC monitor is paused")
+        if app.state.sec_client is None:
+            raise HTTPException(
+                status_code=503,
+                detail="Set AGENTIC_THESIS_SEC_USER_AGENT to a name and contact email",
+            )
+        try:
+            filings = await app.state.sec_client.recent_filings(monitor["cik"])
+            matching = [item for item in filings if item["form"] in monitor["forms"]]
+            if monitor["last_accession"]:
+                accessions = [item["accession"] for item in matching]
+                candidates = (
+                    matching[: accessions.index(monitor["last_accession"])]
+                    if monitor["last_accession"] in accessions
+                    else matching[:1]
+                )
+            else:
+                candidates = matching[:1]
+            run_ids = []
+            for filing in reversed(candidates):
+                content, source_url = await app.state.sec_client.filing_html(
+                    monitor["cik"], filing
+                )
+                document = DisclosureDocument(
+                    document_id=f"{thesis_id}:{filing['accession']}",
+                    thesis_id=thesis_id,
+                    accession=filing["accession"],
+                    filing_date=filing["filing_date"],
+                    source_url=source_url,
+                    content=content,
+                )
+                chunks = chunk_filing(
+                    content,
+                    accession=document.accession,
+                    filing_date=document.filing_date,
+                    source_url=source_url,
+                )
+                if not chunks or not await app.state.workflow.add_disclosure(
+                    document, chunks
+                ):
+                    continue
+                thesis = await app.state.workflow.get_thesis(thesis_id)
+                corpus = await app.state.workflow.chunks_for_thesis(thesis_id)
+                run_id = f"sec-{thesis_id}-{filing['accession']}"
+                await launch_run(run_id, thesis, corpus)
+                run_ids.append(run_id)
+            await app.state.workflow.record_sec_sync(
+                thesis_id,
+                last_accession=matching[0]["accession"] if matching else None,
+                imported=len(run_ids),
+            )
+        except HTTPException:
+            raise
+        except Exception as exc:
+            await app.state.workflow.record_sec_sync(
+                thesis_id,
+                last_accession=None,
+                imported=0,
+                error=str(exc),
+            )
+            raise HTTPException(status_code=502, detail=f"SEC sync failed: {exc}") from exc
+        return {
+            "thesis_id": thesis_id,
+            "checked": len(matching),
+            "imported": len(run_ids),
+            "run_ids": run_ids,
+        }
+
+    async def poll_sec_monitors() -> None:
+        while True:
+            for monitor in await app.state.workflow.list_sec_monitors():
+                if not monitor["enabled"]:
+                    continue
+                if monitor["last_checked_at"]:
+                    checked_at = datetime.fromisoformat(
+                        monitor["last_checked_at"]
+                    ).replace(tzinfo=timezone.utc)
+                    if (
+                        datetime.now(timezone.utc) - checked_at
+                    ).total_seconds() < app.state.collection_interval:
+                        continue
+                try:
+                    await sync_sec_monitor(monitor["thesis_id"])
+                except HTTPException:
+                    pass
+            await asyncio.sleep(app.state.monitor_interval)
+
+    @app.post("/theses/{thesis_id}/sync")
+    async def sync_monitor(thesis_id: str) -> dict:
+        return await sync_sec_monitor(thesis_id)
 
     @app.get("/disclosures")
     async def list_disclosures(thesis_id: str) -> list[dict]:

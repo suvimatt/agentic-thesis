@@ -14,7 +14,7 @@
 
 <h2 align="center">🚀 Stateful RAG for evidence-first investment thesis monitoring</h2>
 
-AgenticThesis detects how new company disclosures support, weaken, or possibly invalidate an investor's existing thesis. Instead of summarizing one filing once, it produces claim-level cited changes, pauses for Human Review, survives restart, and refuses to overwrite a newer thesis version.
+AgenticThesis detects how new company disclosures support, weaken, or possibly invalidate an investor's existing thesis. It can ingest a document manually or monitor selected SEC EDGAR filing types, then produces claim-level cited changes, pauses for Human Review, survives restart, and refuses to overwrite a newer thesis version.
 
 Investment judgment remains with the user. AgenticThesis does not issue Buy / Sell / Hold recommendations.
 
@@ -61,6 +61,13 @@ Set these values:
 | `EMBEDDING_API_KEY` | API key for the embedding endpoint |
 | `EMBEDDING_BASE_URL` | OpenAI-compatible embedding endpoint |
 | `AGENTIC_THESIS_EMBEDDING_MODEL` | Embedding model name |
+| `AGENTIC_THESIS_SEC_USER_AGENT` | Your product/name and contact email; required only for SEC monitoring |
+
+SEC requires automated clients to identify themselves. For example:
+
+```dotenv
+AGENTIC_THESIS_SEC_USER_AGENT="AgenticThesis your-email@example.com"
+```
 
 ### 2. Start the application
 
@@ -112,7 +119,9 @@ AgenticThesis turns Duan Yongping's "do not invest unless you understand the bus
 ## How It Works
 
 ```text
-ThesisSnapshot v1
+manual disclosure or scheduled SEC submissions check
+→ accession/content deduplication and durable filing storage
+→ ThesisSnapshot v1
 → hybrid retrieval over baseline and new filings
 → token-budgeted EvidencePack per claim
 → structured ThesisDelta
@@ -132,7 +141,7 @@ The system has one application-owned workflow, not a collection of autonomous ag
 
 | Boundary | Responsibility | Implementation |
 | --- | --- | --- |
-| Interface | Manage theses and disclosures, start work asynchronously, replay progress, and accept review decisions | FastAPI, background `asyncio` tasks, durable SSE |
+| Interface | Manage theses and disclosures, poll selected SEC filing types, start work asynchronously, replay progress, and accept review decisions | FastAPI, background `asyncio` tasks, durable SSE |
 | Retrieval | Find claim-relevant passages across the filing corpus | deterministic section-labelled fixed-size chunks, BM25, in-process Qdrant vectors, RRF, API rerank |
 | Working Context | Give each claim the smallest sufficient, source-addressable evidence | query-conditioned extractive `EvidencePack`, fixed 2,000-token per-claim budget, evidence IDs and source offsets |
 | Semantic analysis | Compare every thesis claim with supplied evidence only | API Structured Outputs → typed `ThesisDelta` |
@@ -155,6 +164,7 @@ The editable diagram source is [`docs/agentic-thesis-architecture.html`](docs/ag
 - immutable thesis snapshots and compare-and-swap conflict protection;
 - persistent run history and sequenced SSE replay with `Last-Event-ID` across browser or service restarts;
 - multiple isolated theses plus manual HTML/TXT disclosure import;
+- one official-source SEC EDGAR monitor per thesis, selected filing types, accession/content deduplication, manual sync, and a persisted daily collection schedule;
 - async FastAPI, background runs, bounded/timeout-wrapped model calls, checkpoint recovery after shutdown, and live LangGraph events without chain-of-thought;
 - a dependency-free product page for thesis/disclosure management, progress, citations, Context compression, and Human Review;
 - an installable `agentic-thesis serve` CLI with packaged sample data and a stable user data directory.
@@ -165,7 +175,7 @@ Observed on the checked-in fixtures on 2026-09-01:
 
 | Check | Observed result |
 | --- | ---: |
-| Tests | 12 passed |
+| Tests | 15 passed |
 | Clean wheel install | passed outside the repository |
 | 2023 extracted tokens / chunks | 48,923 / 109 |
 | 2024 extracted tokens / chunks | 48,752 / 110 |
@@ -218,6 +228,18 @@ curl -X POST http://localhost:8000/runs/aapl-2024-review/review \
   -d '{"action":"approve"}'
 ```
 
+Configure and check an SEC monitor:
+
+```bash
+curl -X PUT http://localhost:8000/theses/aapl-primary/monitor \
+  -H 'content-type: application/json' \
+  -d '{"cik":"320193","forms":["10-K","10-Q","8-K"],"enabled":true}'
+
+curl -X POST http://localhost:8000/theses/aapl-primary/sync
+```
+
+The first successful check imports only the latest selected filing, establishing a cursor without historical backfill. The service checks whether collection is due when it starts and then hourly while running. Automatic SEC collection occurs only when the last successful collection is at least 24 hours old; “Check SEC now” remains a manual override. A failed collection does not advance that timestamp and is retried on the next hourly check. No new filing means no RAG or LLM run; new filings start a `ThesisDelta` workflow that still stops at Human Review.
+
 The browser can also create/list theses, import/list disclosures, list historical runs, and reopen pending reviews. The generated `/docs` page documents the same HTTP API.
 
 ## 90-Second Verification
@@ -233,9 +255,10 @@ That scenario pauses a run at Human Review, closes and recreates the workflow on
 
 ## Deliberate limits
 
-- packaged historical Apple filings plus manual HTML/TXT import; no automatic SEC monitor yet;
+- automatic ingestion is intentionally limited to official SEC EDGAR submissions; no news, social media, or investor-relations crawlers;
+- the scheduler is one in-process `asyncio` loop that checks due state hourly and automatically performs successful SEC collection at most once per 24 hours; it is not a distributed job system or notification service;
 - Qdrant currently runs in-process; SQLite persists workflow and thesis state;
-- no portfolio management, valuation, Multi-Agent roles, scheduler, or distributed queue;
+- no portfolio management, valuation, Multi-Agent roles, distributed scheduler, or queue;
 - the five-query eval is intentionally small; no measured cost, throughput, p50, p95, or production-readiness claim.
 
 ## License

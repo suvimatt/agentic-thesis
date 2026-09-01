@@ -758,3 +758,305 @@ async def test_multiple_theses_use_only_their_own_manual_disclosures(tmp_path: P
             assert expected in source_text
             assert excluded not in source_text
     await workflow.close()
+
+
+async def test_sec_sync_imports_one_new_filing_once_and_starts_review(
+    tmp_path: Path,
+) -> None:
+    bootstrap = DisclosureChunk(
+        chunk_id="bootstrap",
+        accession="bootstrap",
+        filing_date="2024-01-01",
+        section="Business",
+        text="Services are strategically important.",
+        start_char=0,
+        end_char=37,
+    )
+
+    async def embed(texts: list[str]) -> list[list[float]]:
+        return HybridRetriever.deterministic_embeddings(texts)
+
+    async def rerank(query: str, candidates: list[DisclosureChunk]) -> list[str]:
+        return [chunk.chunk_id for chunk in candidates]
+
+    retriever = HybridRetriever([bootstrap], embed=embed, rerank=rerank)
+    await retriever.index()
+
+    async def analyze(snapshot: ThesisSnapshot, packs: list) -> ThesisDelta:
+        return ThesisDelta(
+            base_thesis_version=snapshot.version,
+            claim_deltas=[
+                ClaimDelta(
+                    claim_id="services",
+                    status=DeltaStatus.SUPPORTED,
+                    explanation="The filing supports the claim.",
+                    evidence_ids=[packs[0].items[0].evidence_id],
+                )
+            ],
+        )
+
+    class FakeSec:
+        async def recent_filings(self, cik: str) -> list[dict[str, str]]:
+            assert cik == "0000320193"
+            return [
+                {
+                    "accession": "0000320193-25-000079",
+                    "filing_date": "2025-08-01",
+                    "form": "10-Q",
+                    "primary_document": "aapl-20250628.htm",
+                }
+            ]
+
+        async def filing_html(self, cik: str, filing: dict[str, str]) -> tuple[str, str]:
+            return (
+                "<html><body><h2>Item 2.</h2>Services revenue increased.</body></html>",
+                "https://www.sec.gov/Archives/edgar/data/320193/"
+                "000032019325000079/aapl-20250628.htm",
+            )
+
+    thesis = ThesisSnapshot(
+        thesis_id="apple-monitor",
+        company="Apple Inc.",
+        version=1,
+        claims=[
+            ThesisClaim(
+                claim_id="services",
+                statement="Services remain strategically important.",
+                rationale="Services diversify gross profit.",
+            )
+        ],
+    )
+    workflow = await AgenticThesisWorkflow.create(
+        tmp_path / "sec-sync.sqlite", retriever, analyze
+    )
+    app = create_app(workflow, sec_client=FakeSec())
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        assert (
+            await client.post("/theses", json=thesis.model_dump(mode="json"))
+        ).status_code == 201
+        configured = await client.put(
+            "/theses/apple-monitor/monitor",
+            json={"cik": "320193", "forms": ["10-Q", "10-K"], "enabled": True},
+        )
+        assert configured.status_code == 200
+        assert configured.json()["cik"] == "0000320193"
+
+        first = await client.post("/theses/apple-monitor/sync")
+        assert first.status_code == 200
+        assert first.json() == {
+            "thesis_id": "apple-monitor",
+            "checked": 1,
+            "imported": 1,
+            "run_ids": ["sec-apple-monitor-0000320193-25-000079"],
+        }
+        events = await client.get(
+            "/runs/sec-apple-monitor-0000320193-25-000079/events"
+        )
+        assert '"status": "awaiting_review"' in events.text
+        monitor = (await client.get("/monitors")).json()[0]
+        assert monitor["last_accession"] == "0000320193-25-000079"
+        assert monitor["last_imported"] == 1
+        assert monitor["last_error"] is None
+        assert len(
+            (
+                await client.get(
+                    "/disclosures", params={"thesis_id": "apple-monitor"}
+                )
+            ).json()
+        ) == 1
+        assert len(
+            (await client.get("/runs", params={"thesis_id": "apple-monitor"})).json()
+        ) == 1
+
+        second = await client.post("/theses/apple-monitor/sync")
+        assert second.status_code == 200
+        assert second.json()["imported"] == 0
+        assert second.json()["run_ids"] == []
+        assert len(
+            (
+                await client.get(
+                    "/disclosures", params={"thesis_id": "apple-monitor"}
+                )
+            ).json()
+        ) == 1
+        assert len(
+            (await client.get("/runs", params={"thesis_id": "apple-monitor"})).json()
+        ) == 1
+        duplicate_accession = await client.post(
+            "/disclosures",
+            json={
+                "document_id": "different-document-id",
+                "thesis_id": "apple-monitor",
+                "accession": "0000320193-25-000079",
+                "filing_date": "2025-08-01",
+                "source_url": "https://example.com/changed-copy",
+                "content": "<html><body>Changed copy of the same filing.</body></html>",
+            },
+        )
+        assert duplicate_accession.status_code == 409
+        invalid_form = await client.put(
+            "/theses/apple-monitor/monitor",
+            json={"cik": "320193", "forms": ["../../10-K"], "enabled": True},
+        )
+        assert invalid_form.status_code == 422
+        page = (await client.get("/")).text
+        assert 'id="monitor-form"' in page
+        assert 'id="monitor-sync"' in page
+        assert "SEC EDGAR monitor" in page
+    await workflow.close()
+
+
+async def test_enabled_sec_monitor_polls_and_creates_a_review_run(
+    tmp_path: Path,
+) -> None:
+    bootstrap = DisclosureChunk(
+        chunk_id="bootstrap",
+        accession="bootstrap",
+        filing_date="2024-01-01",
+        section="Business",
+        text="Cloud demand remained durable.",
+        start_char=0,
+        end_char=30,
+    )
+
+    async def embed(texts: list[str]) -> list[list[float]]:
+        return HybridRetriever.deterministic_embeddings(texts)
+
+    async def rerank(query: str, candidates: list[DisclosureChunk]) -> list[str]:
+        return [chunk.chunk_id for chunk in candidates]
+
+    retriever = HybridRetriever([bootstrap], embed=embed, rerank=rerank)
+    await retriever.index()
+
+    async def analyze(snapshot: ThesisSnapshot, packs: list) -> ThesisDelta:
+        return ThesisDelta(
+            base_thesis_version=1,
+            claim_deltas=[
+                ClaimDelta(
+                    claim_id="cloud",
+                    status=DeltaStatus.SUPPORTED,
+                    explanation="The filing supports the claim.",
+                    evidence_ids=[packs[0].items[0].evidence_id],
+                )
+            ],
+        )
+
+    class FakeSec:
+        def __init__(self) -> None:
+            self.checks = 0
+
+        async def recent_filings(self, cik: str) -> list[dict[str, str]]:
+            self.checks += 1
+            if self.checks > 2:
+                raise RuntimeError("SEC was checked again before the next interval")
+            return [
+                {
+                    "accession": f"0000789019-25-{98 + self.checks:06d}",
+                    "filing_date": f"2025-07-{29 + self.checks}",
+                    "form": "10-K",
+                    "primary_document": "msft-20250630.htm",
+                }
+            ]
+
+        async def filing_html(self, cik: str, filing: dict[str, str]) -> tuple[str, str]:
+            return (
+                f"<html><body>Cloud demand remained durable. {filing['accession']}</body></html>",
+                "https://www.sec.gov/Archives/edgar/data/789019/"
+                f"{filing['accession'].replace('-', '')}/msft-20250630.htm",
+            )
+
+    thesis = ThesisSnapshot(
+        thesis_id="microsoft-monitor",
+        company="Microsoft Corp.",
+        version=1,
+        claims=[
+            ThesisClaim(
+                claim_id="cloud",
+                statement="Cloud demand remains durable.",
+                rationale="Cloud supports recurring growth.",
+            )
+        ],
+    )
+    workflow = await AgenticThesisWorkflow.create(
+        tmp_path / "sec-poll.sqlite", retriever, analyze
+    )
+    app = create_app(
+        workflow,
+        sec_client=FakeSec(),
+        monitor_interval=0.01,
+        collection_interval=1.5,
+    )
+    await workflow.create_thesis(thesis)
+    await workflow.configure_sec_monitor(
+        thesis.thesis_id, "0000789019", ["10-K"], True
+    )
+
+    async with app.router.lifespan_context(app):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            async with asyncio.timeout(2):
+                while not (runs := (await client.get("/runs")).json()):
+                    await asyncio.sleep(0)
+            assert runs[0]["run_id"] == "sec-microsoft-monitor-0000789019-25-000099"
+            events = await client.get(f"/runs/{runs[0]['run_id']}/events")
+            assert '"status": "awaiting_review"' in events.text
+            await asyncio.sleep(0.03)
+            assert len((await client.get("/runs")).json()) == 1
+            assert (await client.get("/monitors")).json()[0]["last_error"] is None
+            async with asyncio.timeout(2.5):
+                while len(runs := (await client.get("/runs")).json()) < 2:
+                    await asyncio.sleep(0.01)
+            assert {run["run_id"] for run in runs} == {
+                "sec-microsoft-monitor-0000789019-25-000099",
+                "sec-microsoft-monitor-0000789019-25-000100",
+            }
+    await workflow.close()
+
+
+async def test_failed_sec_collection_does_not_count_as_a_success(
+    tmp_path: Path,
+) -> None:
+    async def analyze(snapshot: ThesisSnapshot, packs: list) -> ThesisDelta:
+        raise AssertionError("analysis must not run when collection fails")
+
+    class FailingSec:
+        async def recent_filings(self, cik: str) -> list[dict[str, str]]:
+            raise TimeoutError("SEC timed out")
+
+    thesis = ThesisSnapshot(
+        thesis_id="failed-monitor",
+        company="Example Corp.",
+        version=1,
+        claims=[
+            ThesisClaim(
+                claim_id="durability",
+                statement="Demand remains durable.",
+                rationale="Recurring customer demand matters.",
+            )
+        ],
+    )
+    workflow = await AgenticThesisWorkflow.create(
+        tmp_path / "failed-sec.sqlite", object(), analyze
+    )
+    app = create_app(workflow, sec_client=FailingSec())
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        assert (
+            await client.post("/theses", json=thesis.model_dump(mode="json"))
+        ).status_code == 201
+        assert (
+            await client.put(
+                "/theses/failed-monitor/monitor",
+                json={"cik": "320193", "forms": ["10-K"], "enabled": True},
+            )
+        ).status_code == 200
+        failed = await client.post("/theses/failed-monitor/sync")
+        assert failed.status_code == 502
+        monitor = (await client.get("/monitors")).json()[0]
+        assert monitor["last_checked_at"] is None
+        assert monitor["last_error"] == "SEC timed out"
+    await workflow.close()

@@ -100,6 +100,16 @@ class AgenticThesisWorkflow:
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE (thesis_id, content_hash)
             );
+            CREATE TABLE IF NOT EXISTS sec_monitors (
+                thesis_id TEXT PRIMARY KEY,
+                cik TEXT NOT NULL,
+                forms_json TEXT NOT NULL,
+                enabled INTEGER NOT NULL,
+                last_accession TEXT,
+                last_checked_at TEXT,
+                last_error TEXT,
+                last_imported INTEGER NOT NULL DEFAULT 0
+            );
             """
         )
         await connection.commit()
@@ -461,7 +471,11 @@ class AgenticThesisWorkflow:
             INSERT OR IGNORE INTO disclosures
                 (document_id, thesis_id, accession, filing_date, source_url,
                  content_hash, raw_text, chunks_json)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            SELECT ?, ?, ?, ?, ?, ?, ?, ?
+            WHERE NOT EXISTS (
+                SELECT 1 FROM disclosures
+                WHERE thesis_id = ? AND accession = ?
+            )
             """,
             (
                 document.document_id,
@@ -472,6 +486,8 @@ class AgenticThesisWorkflow:
                 content_hash,
                 document.content,
                 json.dumps([chunk.model_dump(mode="json") for chunk in chunks]),
+                document.thesis_id,
+                document.accession,
             ),
         )
         await self.connection.commit()
@@ -498,6 +514,88 @@ class AgenticThesisWorkflow:
             for row in await cursor.fetchall()
             for chunk in json.loads(row[0])
         ]
+
+    async def configure_sec_monitor(
+        self,
+        thesis_id: str,
+        cik: str,
+        forms: list[str],
+        enabled: bool,
+    ) -> dict[str, Any]:
+        await self.connection.execute(
+            """
+            INSERT INTO sec_monitors (thesis_id, cik, forms_json, enabled)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(thesis_id) DO UPDATE SET
+                cik = excluded.cik,
+                forms_json = excluded.forms_json,
+                enabled = excluded.enabled,
+                last_accession = CASE
+                    WHEN cik = excluded.cik AND forms_json = excluded.forms_json
+                    THEN last_accession
+                    ELSE NULL
+                END
+            """,
+            (thesis_id, cik, json.dumps(forms), enabled),
+        )
+        await self.connection.commit()
+        return await self.get_sec_monitor(thesis_id)
+
+    async def get_sec_monitor(self, thesis_id: str) -> dict[str, Any] | None:
+        cursor = await self.connection.execute(
+            """
+            SELECT thesis_id, cik, forms_json, enabled, last_accession,
+                   last_checked_at, last_error, last_imported
+            FROM sec_monitors WHERE thesis_id = ?
+            """,
+            (thesis_id,),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return None
+        return {
+            "thesis_id": row[0],
+            "cik": row[1],
+            "forms": json.loads(row[2]),
+            "enabled": bool(row[3]),
+            "last_accession": row[4],
+            "last_checked_at": row[5],
+            "last_error": row[6],
+            "last_imported": row[7],
+        }
+
+    async def list_sec_monitors(self) -> list[dict[str, Any]]:
+        cursor = await self.connection.execute(
+            "SELECT thesis_id FROM sec_monitors ORDER BY thesis_id"
+        )
+        return [
+            await self.get_sec_monitor(row[0])
+            for row in await cursor.fetchall()
+        ]
+
+    async def record_sec_sync(
+        self,
+        thesis_id: str,
+        *,
+        last_accession: str | None,
+        imported: int,
+        error: str | None = None,
+    ) -> None:
+        await self.connection.execute(
+            """
+            UPDATE sec_monitors
+            SET last_accession = COALESCE(?, last_accession),
+                last_checked_at = CASE
+                    WHEN ? IS NULL THEN CURRENT_TIMESTAMP
+                    ELSE last_checked_at
+                END,
+                last_error = ?,
+                last_imported = ?
+            WHERE thesis_id = ?
+            """,
+            (last_accession, error, error, imported, thesis_id),
+        )
+        await self.connection.commit()
 
     async def resume(self, run_id: str, decision: ReviewDecision) -> dict[str, Any]:
         config = {"configurable": {"thread_id": run_id}}

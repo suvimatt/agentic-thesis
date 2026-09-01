@@ -62,7 +62,7 @@
       <rect x="320" y="120" width="180" height="80" rx="6" fill="#ffffff" stroke="#172019" stroke-width="1"/>
       <rect x="332" y="132" width="32" height="12" rx="2" fill="transparent" stroke="rgba(23,32,25,.40)" stroke-width=".8"/>
       <text x="348" y="140" fill="#172019" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">DATA</text>
-      <text x="410" y="164" fill="#172019" font-size="12" font-weight="600" font-family="ui-sans-serif,system-ui,sans-serif" text-anchor="middle">Thesis + SEC filings</text>
+      <text x="410" y="164" fill="#172019" font-size="12" font-weight="600" font-family="ui-sans-serif,system-ui,sans-serif" text-anchor="middle">SEC monitor + manual files</text>
       <text x="410" y="184" fill="#667069" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">current snapshot · stable chunk IDs</text>
 
       <!-- Node 3: Retrieval -->

@@ -167,6 +167,9 @@ venv.bak/
 # mkdocs documentation
 /site
 
+# diagram config
+.diagram-design
+
 # mypy
 .mypy_cache/
 .dmypy.json
@@ -220,3 +223,4 @@ __marimo__/
 # AgenticThesis runtime state
 *.sqlite
 *.sqlite-*
+

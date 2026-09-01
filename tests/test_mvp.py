@@ -465,14 +465,20 @@ async def test_langgraph_resumes_after_restart_and_rejects_stale_commit(tmp_path
         page = await client.get("/")
         assert page.status_code == 200
         assert page.headers["content-type"].startswith("text/html")
-        assert "Monitor a thesis" in page.text
-        assert "Review thesis changes" in page.text
-        assert "Recent runs" in page.text
+        assert "Track why you own a company" in page.text
+        assert "what would prove you wrong" in page.text
+        assert "What changed in your investment case" in page.text
+        assert "Review the proposed update" in page.text
+        assert "Recent checks" in page.text
         assert 'id="runs"' in page.text
-        assert "Add a thesis" in page.text
-        assert "Add disclosure" in page.text
-        assert "Keep current thesis" in page.text
-        assert "Apply changes" in page.text
+        assert "Add an investment case" in page.text
+        assert "Add a company filing manually" in page.text
+        assert "Keep my current view" in page.text
+        assert "Save this evidence update" in page.text
+        assert "Still supported" in page.text
+        assert "May no longer hold" in page.text
+        assert "Monitor a thesis" not in page.text
+        assert "Review thesis changes" not in page.text
         assert "A stale base version returns HTTP 409" not in page.text
         assert "ThesisSnapshot v1" not in page.text
 
@@ -904,7 +910,7 @@ async def test_sec_sync_imports_one_new_filing_once_and_starts_review(
         page = (await client.get("/")).text
         assert 'id="monitor-form"' in page
         assert 'id="monitor-sync"' in page
-        assert "SEC EDGAR monitor" in page
+        assert "Daily SEC filing check" in page
     await workflow.close()
 
 

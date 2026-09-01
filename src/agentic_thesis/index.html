@@ -55,80 +55,98 @@
 <main>
   <header>
     <div>
-      <div class="eyebrow">Evidence-first investment research</div>
-      <h1>Monitor a thesis,<br>not a news feed.</h1>
-      <p class="lede">See how a new company disclosure supports, weakens, or possibly invalidates each versioned investment claim.</p>
+      <div class="eyebrow">A daily check on your investment reasons</div>
+      <h1>Track why you own a company,<br>not every headline.</h1>
+      <p class="lede">Write down why you invested and what would prove you wrong. AgenticThesis checks official filings, shows which reasons changed, and links every conclusion to the source. You decide what to save.</p>
     </div>
-    <div><label for="thesis">Current thesis</label><select id="thesis"></select><button id="start">Analyze saved disclosures</button></div>
+    <div><label for="thesis">Company and investment case</label><select id="thesis"></select><button id="start">Check saved filings</button></div>
   </header>
 
   <div class="grid">
     <section class="card">
-      <div class="row between"><h2>Thesis changes</h2><span id="status" class="badge">Ready</span></div>
-      <div id="claims" class="empty">Start a run to compare the 2024 disclosure with your current saved thesis.</div>
+      <div class="row between"><h2>What changed in your investment case?</h2><span id="status" class="badge">Ready</span></div>
+      <div id="claims" class="empty">Choose a company and check its saved filings. Each investment reason will be marked as still supported, weakened, possibly broken, or lacking evidence.</div>
     </section>
     <aside class="card">
-      <h2>Workflow</h2>
-      <p class="muted">Live LangGraph progress. No chain-of-thought is exposed.</p>
+      <h2>What AgenticThesis is doing</h2>
+      <p class="muted">It finds relevant passages, compares them with your reasons, and verifies every quote.</p>
       <ol id="steps" class="steps"></ol>
       <div id="error" role="alert"></div>
     </aside>
 
     <section id="review" class="card span">
       <div class="row between">
-        <div><div class="eyebrow">Review thesis changes</div><h2>Apply this evidence update?</h2></div>
-        <div class="row"><button id="reject" class="danger">Keep current thesis</button><button id="approve">Apply changes</button></div>
+        <div><div class="eyebrow">Your decision</div><h2>Review the proposed update</h2></div>
+        <div class="row"><button id="reject" class="danger">Keep my current view</button><button id="approve">Save this evidence update</button></div>
       </div>
-      <p class="muted">Review the evidence before updating your saved thesis.</p>
+      <p class="muted">Nothing changes until you have checked the evidence and approved it.</p>
     </section>
 
     <section class="card span">
-      <div class="row between"><h2>Recent runs</h2><span class="muted">Saved across restarts</span></div>
-      <div id="runs" class="empty">No saved runs yet.</div>
+      <div class="row between"><h2>Recent checks</h2><span class="muted">Available after restart</span></div>
+      <div id="runs" class="empty">No saved checks yet.</div>
     </section>
 
     <section class="card span">
-      <div class="row between"><h2>Theses and disclosures</h2><span class="muted">Saved locally</span></div>
-      <div id="disclosures" class="empty">Choose a thesis to see its disclosures.</div>
+      <div class="row between"><h2>Companies and source documents</h2><span class="muted">Saved locally</span></div>
+      <div id="disclosures" class="empty">Choose a company to see its saved filings.</div>
       <details open>
-        <summary>SEC EDGAR monitor</summary>
+        <summary>Daily SEC filing check</summary>
         <form id="monitor-form">
           <div class="row">
-            <label>Company CIK<input id="monitor-cik" inputmode="numeric" pattern="[0-9]{1,10}" placeholder="320193" required></label>
-            <label>Filing types<input id="monitor-forms" value="10-K, 10-Q, 8-K" required></label>
+            <label>SEC company ID (CIK)<input id="monitor-cik" inputmode="numeric" pattern="[0-9]{1,10}" placeholder="320193" required></label>
+            <label>Reports to watch<input id="monitor-forms" value="10-K, 10-Q, 8-K" required></label>
             <label class="row"><input id="monitor-enabled" type="checkbox" checked> Check daily</label>
           </div>
-          <div class="row"><button type="submit">Save monitor</button><button id="monitor-sync" type="button" class="secondary" disabled>Check SEC now</button></div>
-          <div id="monitor-status" class="muted">No SEC monitor configured for this thesis.</div>
+          <div class="row"><button type="submit">Save daily check</button><button id="monitor-sync" type="button" class="secondary" disabled>Check SEC now</button></div>
+          <div id="monitor-status" class="muted">Daily checking is not set up for this company.</div>
         </form>
       </details>
       <details>
-        <summary>Add a thesis</summary>
+        <summary>Add an investment case</summary>
         <form id="thesis-form">
-          <label>Thesis JSON<textarea id="thesis-json" required placeholder='{"thesis_id":"my-thesis","company":"Example Inc.","version":1,"claims":[{"claim_id":"growth","statement":"Growth remains durable.","rationale":"Recurring demand.","falsifiers":["Revenue declines"],"evidence_refs":[]}]}'></textarea></label>
-          <button type="submit">Save thesis</button>
+          <label>Investment case JSON (advanced)<textarea id="thesis-json" required placeholder='{"thesis_id":"my-thesis","company":"Example Inc.","version":1,"claims":[{"claim_id":"growth","statement":"Growth remains durable.","rationale":"Recurring demand.","falsifiers":["Revenue declines"],"evidence_refs":[]}]}'></textarea></label>
+          <button type="submit">Save investment case</button>
         </form>
       </details>
       <details>
-        <summary>Add disclosure</summary>
+        <summary>Add a company filing manually</summary>
         <form id="disclosure-form">
           <label>HTML or text file<input id="disclosure-file" type="file" accept=".html,.htm,.txt,text/html,text/plain" required></label>
           <label>Accession or source ID<input id="accession" required></label>
           <label>Filing date<input id="filing-date" type="date" required></label>
           <label>Source URL<input id="source-url" type="url"></label>
-          <button type="submit">Save disclosure</button>
+          <button type="submit">Save filing</button>
         </form>
       </details>
     </section>
 
     <section class="card span">
-      <h2>Evidence packs</h2>
-      <div id="evidence" class="empty">Citations and compression records will appear here.</div>
+      <h2>Source evidence</h2>
+      <div id="evidence" class="empty">The exact quotes behind each result will appear here.</div>
     </section>
   </div>
 </main>
 <script>
   const $ = id => document.getElementById(id);
+  const statusLabels = {
+    ready:'Ready', running:'Checking filings', awaiting_review:'Needs your review',
+    committed:'Update saved', rejected:'Kept unchanged', failed:'Check failed',
+    version_conflict:'A newer update exists', reconnecting:'Reconnecting',
+    submitting_review:'Saving your decision', needs_refresh:'Refresh needed'
+  };
+  const resultLabels = {
+    supported:'Still supported', weakened:'Weakened',
+    possibly_invalidated:'May no longer hold', unknown:'Not enough evidence'
+  };
+  const stepLabels = {
+    retrieve_claims:'Finding evidence for each investment reason',
+    build_evidence_packs:'Keeping only the most relevant passages',
+    analyze_deltas:'Comparing new facts with your reasons',
+    validate_citations:'Checking every quote against the source',
+    human_review:'Waiting for your review',
+    commit_snapshot:'Saving your approved update', workflow:'Analysis'
+  };
   let runId;
   let eventSource;
 
@@ -139,7 +157,7 @@
   }
 
   function setStatus(value) {
-    $('status').textContent = value.replaceAll('_', ' ');
+    $('status').textContent = statusLabels[value] || value.replaceAll('_', ' ');
     $('status').className = `badge ${value}`;
   }
 
@@ -156,7 +174,7 @@
       : event.claims?.some(claim => claim.retrieval_ms != null)
         ? event.claims.map(claim => `${claim.retrieval_ms}+${claim.rerank_ms} ms`).join(', ')
         : event.latency_ms != null ? `${event.latency_ms} ms` : '';
-    item.innerHTML = `<span class="dot"></span><span>${escapeHtml(event.node)}</span><code>${escapeHtml(compression)}</code>`;
+    item.innerHTML = `<span class="dot"></span><span>${escapeHtml(stepLabels[event.node] || event.node)}</span><code>${escapeHtml(compression)}</code>`;
     $('steps').append(item);
   }
 
@@ -181,11 +199,12 @@
     $('claims').className = '';
     $('claims').innerHTML = state.thesis.claims.map(claim => {
       const delta = deltas.get(claim.claim_id);
-      return `<article class="claim"><div class="row between"><h3>${escapeHtml(claim.statement)}</h3><span class="badge ${delta?.status || 'unknown'}">${escapeHtml(delta?.status || 'unknown')}</span></div><p>${escapeHtml(delta?.explanation || 'No supported change.')}</p></article>`;
+      const result = delta?.status || 'unknown';
+      return `<article class="claim"><div class="row between"><h3>${escapeHtml(claim.statement)}</h3><span class="badge ${result}">${escapeHtml(resultLabels[result])}</span></div><p>${escapeHtml(delta?.explanation || 'No evidence-backed change was found.')}</p></article>`;
     }).join('');
     $('evidence').className = '';
     $('evidence').innerHTML = state.evidence_packs.flatMap(pack => pack.items.map(item =>
-      `<article class="evidence"><div class="row between"><strong>${escapeHtml(pack.claim_id)}</strong><span class="muted">${escapeHtml(item.filing_date)} · ${escapeHtml(item.section)}</span></div><blockquote>${escapeHtml(item.quote)}</blockquote><div class="row between"><code>${escapeHtml(item.evidence_id)}</code>${item.source_url ? `<a href="${escapeHtml(item.source_url)}" target="_blank" rel="noreferrer">Open SEC source ↗</a>` : ''}</div></article>`
+      `<article class="evidence"><div class="row between"><strong>${escapeHtml(pack.claim_id)}</strong><span class="muted">${escapeHtml(item.filing_date)} · ${escapeHtml(item.section)}</span></div><blockquote>${escapeHtml(item.quote)}</blockquote><div class="row between"><code>${escapeHtml(item.evidence_id)}</code>${item.source_url ? `<a href="${escapeHtml(item.source_url)}" target="_blank" rel="noreferrer">Read original filing ↗</a>` : ''}</div></article>`
     )).join('');
     return state;
   }
@@ -194,12 +213,12 @@
     const runs = await readResponse(await fetch('/runs'));
     if (!runs.length) {
       $('runs').className = 'empty';
-      $('runs').textContent = 'No saved runs yet.';
+      $('runs').textContent = 'No saved checks yet.';
       return;
     }
     $('runs').className = '';
     $('runs').innerHTML = runs.map(run =>
-      `<article class="claim row between"><div><strong>${escapeHtml(run.thesis_id)}</strong><div class="muted">${escapeHtml(run.run_id)} · Thesis v${run.base_thesis_version}</div></div><div class="row"><span class="badge ${run.status}">${escapeHtml(run.status)}</span><button class="secondary" data-run-id="${escapeHtml(run.run_id)}">Open</button></div></article>`
+      `<article class="claim row between"><div><strong>${escapeHtml(run.thesis_id)}</strong><div class="muted">${escapeHtml(run.run_id)} · Saved view v${run.base_thesis_version}</div></div><div class="row"><span class="badge ${run.status}">${escapeHtml(statusLabels[run.status] || run.status)}</span><button class="secondary" data-run-id="${escapeHtml(run.run_id)}">Open</button></div></article>`
     ).join('');
     document.querySelectorAll('[data-run-id]').forEach(button =>
       button.addEventListener('click', () => openRun(button.dataset.runId))
@@ -217,7 +236,7 @@
     $('disclosures').className = disclosures.length ? '' : 'empty';
     $('disclosures').innerHTML = disclosures.length
       ? disclosures.map(item => `<article class="claim"><div class="row between"><strong>${escapeHtml(item.accession)}</strong><span class="muted">${escapeHtml(item.filing_date)}</span></div><div class="muted">${escapeHtml(item.document_id)}</div></article>`).join('')
-      : 'No disclosures saved for this thesis.';
+      : 'No company filings are saved yet.';
   }
 
   async function loadMonitor() {
@@ -230,7 +249,7 @@
       $('monitor-cik').value = '';
       $('monitor-forms').value = '10-K, 10-Q, 8-K';
       $('monitor-enabled').checked = true;
-      $('monitor-status').textContent = 'No SEC monitor configured for this thesis.';
+      $('monitor-status').textContent = 'Daily checking is not set up for this company.';
       return;
     }
     $('monitor-cik').value = monitor.cik;
@@ -307,7 +326,7 @@
     $('review').style.display = 'none';
     setStatus('running');
     const thesisId = $('thesis').value;
-    if (!thesisId) return showError('Create a thesis first.');
+    if (!thesisId) return showError('Add an investment case first.');
     runId = `${thesisId}-${crypto.randomUUID()}`;
     try {
       await readResponse(await fetch('/runs', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({run_id:runId, thesis_id:thesisId})}));
@@ -366,7 +385,7 @@
     try {
       const thesisId = $('thesis').value;
       const file = $('disclosure-file').files[0];
-      if (!thesisId || !file) throw new Error('Choose a thesis and file first.');
+      if (!thesisId || !file) throw new Error('Choose a company and file first.');
       const accession = $('accession').value.trim();
       await readResponse(await fetch('/disclosures', {
         method:'POST',
@@ -390,7 +409,7 @@
     event.preventDefault();
     try {
       const thesisId = $('thesis').value;
-      if (!thesisId) throw new Error('Choose a thesis first.');
+      if (!thesisId) throw new Error('Choose a company first.');
       await readResponse(await fetch(`/theses/${encodeURIComponent(thesisId)}/monitor`, {
         method:'PUT',
         headers:{'content-type':'application/json'},

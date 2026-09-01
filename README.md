@@ -12,25 +12,37 @@
   <a href="https://github.com/suvimatt/agentic-thesis/stargazers"><img src="https://img.shields.io/github/stars/suvimatt/agentic-thesis?style=social" alt="GitHub stars"></a>
 </p>
 
-<h2 align="center">🚀 Stateful RAG for evidence-first investment thesis monitoring</h2>
+<h2 align="center">Know why you own a company—and notice when the facts change</h2>
 
-AgenticThesis detects how new company disclosures support, weaken, or possibly invalidate an investor's existing thesis. It can ingest a document manually or monitor selected SEC EDGAR filing types, then produces claim-level cited changes, pauses for Human Review, survives restart, and refuses to overwrite a newer thesis version.
+Most part-time investors do not need another news feed. They need a reliable way to remember why they invested and to notice when new company facts challenge those reasons.
 
-Investment judgment remains with the user. AgenticThesis does not issue Buy / Sell / Hold recommendations.
+AgenticThesis lets you write down:
 
-If this project helps you build more reliable AI research systems, please consider giving it a star. It helps others discover the project and supports further development.
+- **why you believe the business is worth following or owning**;
+- **what facts would prove each belief wrong**.
 
-<p align="center">
-  <a href="https://github.com/suvimatt/agentic-thesis">
-    <img src="https://img.shields.io/badge/%E2%AD%90-Give%20AgenticThesis%20a%20Star-yellow?style=for-the-badge&logo=github" alt="Give AgenticThesis a Star">
-  </a>
-</p>
+It checks official SEC filings each day. When a new filing appears, it compares the new facts with each saved investment reason, shows the exact supporting quotes, and asks you to review the proposed update. If nothing new appears, it does not spend money running an AI analysis.
+
+You remain the decision-maker. AgenticThesis does not tell you to Buy, Sell, or Hold.
+
+## A concrete Apple example
+
+The included Apple example produced these results in a recorded live API run:
+
+| Your saved investment reason | What the new filing showed | Plain-English result |
+| --- | --- | --- |
+| Services helps Apple maintain durable margins | Services gross margin was 73.9% versus 37.2% for Products, while Services sales grew 13% | **Still supported** |
+| Greater China remains a resilient source of demand | Greater China sales fell 8%, mainly because of lower iPhone and iPad sales | **May no longer hold** |
+| Apple can manage concentrated component supply | Apple still depends on some single or limited sources, but no current material disruption was established | **Weakened** |
+
+Each result links back to the original filing passages. Nothing is added to your saved investment case until you approve it.
 
 ## Table of Contents
 
+- [A concrete Apple example](#a-concrete-apple-example)
 - [🚀 Quick Start](#-quick-start)
-- [Why AgenticThesis](#why-agenticthesis)
-- [Investment Philosophy → Engineering Decisions](#investment-philosophy)
+- [What AgenticThesis does for you](#what-agenticthesis-does-for-you)
+- [Plain-English terms](#plain-english-terms)
 - [How It Works](#how-it-works)
 - [Architecture](#architecture)
 - [Implemented Capabilities](#implemented-capabilities)
@@ -75,7 +87,7 @@ AGENTIC_THESIS_SEC_USER_AGENT="AgenticThesis your-email@example.com"
 uvx --from git+https://github.com/suvimatt/agentic-thesis agentic-thesis serve
 ```
 
-Open [http://127.0.0.1:8000](http://127.0.0.1:8000). The first start seeds the packaged Apple thesis and filings. Theses, imported disclosures, run history, events, checkpoints, and approved versions persist under `~/.agentic-thesis/` across restarts.
+Open [http://127.0.0.1:8000](http://127.0.0.1:8000). The first start includes a ready-to-use Apple investment case and two filings. Your investment cases, source documents, checks, pending reviews, and approved updates remain under `~/.agentic-thesis/` after you close and restart the app.
 
 For development and deterministic verification:
 
@@ -89,49 +101,43 @@ python3 -m venv .venv
 
 The test suite uses deterministic retrieval and model substitutes where appropriate, so the core state guarantees can be verified without calling an external model.
 
-## Why AgenticThesis
+## What AgenticThesis does for you
 
-Most filing assistants answer: *What does this document say?*
-
-AgenticThesis answers a harder, stateful question: *How does this new evidence change what I already believe about the company?*
-
-| One-shot filing assistant | AgenticThesis |
+| What usually goes wrong | What AgenticThesis does |
 | --- | --- |
-| Summarizes one document | Compares new disclosures with a versioned thesis |
-| Produces free-form prose | Produces a typed, claim-level `ThesisDelta` |
-| Treats chat history as memory | Stores immutable `ThesisSnapshot` versions |
-| May return unsupported conclusions | Validates every cited quote against its source |
-| Finishes after generation | Requires Human Review before authoritative state changes |
-| Restarts from the beginning | Resumes from a SQLite checkpoint |
+| Your original reasons get blurred by daily price moves and headlines | Keeps a dated history of what you believed |
+| A 100-page filing is too long to compare with every investment reason | Finds the passages relevant to each reason |
+| An AI summary sounds confident but may not be grounded | Checks every quoted passage against the source |
+| New evidence gets mixed with your final judgment | Proposes an update and waits for your approval |
+| The app or computer restarts during research | Continues from saved progress |
 
-<a id="investment-philosophy"></a>
+The product is built for disciplined review, not trading signals. When evidence is missing or contradictory, it says **Not enough evidence** instead of forcing an answer.
 
-## Investment Philosophy → Engineering Decisions
+## Plain-English terms
 
-AgenticThesis turns Duan Yongping's "do not invest unless you understand the business" principle into system boundaries, not an investing persona or recommendation engine:
+The code and engineering sections use precise internal names. In the product:
 
-- insufficient or conflicting evidence produces `unknown`, not a forced conclusion;
-- user-defined falsifiers make counter-evidence a first-class test, and `possibly_invalidated` requires a matched falsifier;
-- the system never issues Buy / Sell / Hold recommendations;
-- the user owns the thesis and the final investment judgment;
-- new evidence produces only a reviewable `ThesisDelta` proposal; the authoritative `ThesisSnapshot` changes only after explicit Human Review.
+| Internal term | What it means to an investor |
+| --- | --- |
+| Investment thesis | Your saved reasons for following or owning a company |
+| Claim | One specific investment reason |
+| Falsifier | A fact that would prove that reason wrong |
+| Thesis delta | A proposed evidence-based update |
+| Human Review | You read the evidence and decide whether to save the update |
 
 ## How It Works
 
 ```text
-manual disclosure or scheduled SEC submissions check
-→ accession/content deduplication and durable filing storage
-→ ThesisSnapshot v1
-→ hybrid retrieval over baseline and new filings
-→ token-budgeted EvidencePack per claim
-→ structured ThesisDelta
-→ citation and falsifier validation
-→ Human Review
-→ compare-and-swap commit
-→ ThesisSnapshot v2 or version_conflict
+Write down your investment reasons and what would prove them wrong
+→ AgenticThesis checks selected SEC reports once a day
+→ No new filing: record the check and stop
+→ New filing: compare its facts with every saved reason
+→ Show Still supported / Weakened / May no longer hold / Not enough evidence
+→ Link each result to the exact original quotes
+→ Wait for you to keep your current view or save the update
 ```
 
-Each claim receives one of four states: `supported`, `weakened`, `possibly_invalidated`, or `unknown`.
+Under the hood, these four results are stored as `supported`, `weakened`, `possibly_invalidated`, and `unknown`. The reviewable update is a typed `ThesisDelta`; an approved update becomes the next immutable `ThesisSnapshot` version.
 
 ## Architecture
 

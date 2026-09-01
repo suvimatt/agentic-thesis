@@ -227,7 +227,7 @@ def create_app(
         if workflow is None:
             await app.state.workflow.close()
 
-    app = FastAPI(title="AgenticThesis", version="0.3.0", lifespan=lifespan)
+    app = FastAPI(title="AgenticThesis", version="0.4.0", lifespan=lifespan)
     if workflow is not None:
         app.state.workflow = workflow
         app.state.thesis = None

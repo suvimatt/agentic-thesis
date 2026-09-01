@@ -12,25 +12,37 @@
   <a href="https://github.com/suvimatt/agentic-thesis/stargazers"><img src="https://img.shields.io/github/stars/suvimatt/agentic-thesis?style=social" alt="GitHub stars"></a>
 </p>
 
-<h2 align="center">🚀 基于证据、持续维护投资 Thesis 的有状态 RAG 系统</h2>
+<h2 align="center">记住自己为什么买一家公司，也及时看见事实变了</h2>
 
-AgenticThesis 判断一家公司的新披露如何支持、削弱或可能推翻投资者已有的 Thesis。材料既可以手工导入，也可以按指定类型监控 SEC EDGAR Filing。系统生成带原文引用的逐条判断变化，在 Human Review 处暂停，支持重启后继续，并阻止旧任务覆盖更新版本的 Thesis。
+普通业余投资者往往不缺新闻，缺的是一种可靠的方法：长期记住自己为什么投资，并在公司出现新事实时，检查原来的理由是否还成立。
 
-投资判断始终归用户所有。AgenticThesis 不输出 Buy / Sell / Hold 建议。
+你先在 AgenticThesis 中写下：
 
-如果这个项目能帮助你构建更可靠的 AI 研究系统，欢迎点一个 Star。你的支持可以让更多开发者发现它，也会推动项目继续完善。
+- **为什么看好或持有这家公司**；
+- **出现什么事实，就说明这条理由错了**。
 
-<p align="center">
-  <a href="https://github.com/suvimatt/agentic-thesis">
-    <img src="https://img.shields.io/badge/%E2%AD%90-Give%20AgenticThesis%20a%20Star-yellow?style=for-the-badge&logo=github" alt="Give AgenticThesis a Star">
-  </a>
-</p>
+系统每天检查一次 SEC 官方披露。有新报告时，它逐条对照你的投资理由，展示支持或反驳它的原文，并请你确认是否更新记录。没有新报告时，就只记录本次检查，不花钱调用 AI 分析。
+
+最终判断始终由你完成。AgenticThesis 不告诉你应该买入、卖出或持有。
+
+## 一个具体的 Apple 例子
+
+项目自带的 Apple 案例在一次真实 API 运行中得到以下结果：
+
+| 你原来写下的投资理由 | 新报告里的事实 | 普通人能看懂的结果 |
+| --- | --- | --- |
+| Services 能帮助 Apple 保持较好的整体利润率 | Services 毛利率为 73.9%，Products 为 37.2%，Services 销售额增长 13% | **仍然成立** |
+| 大中华区仍是有韧性的需求来源 | 大中华区销售额下降 8%，主要因为 iPhone 和 iPad 销售下降 | **可能已经不成立** |
+| Apple 能处理零部件供应集中的风险 | Apple 仍依赖部分单一或有限供应商，但没有证据表明当前已发生重大生产中断 | **理由被削弱** |
+
+每个结果都能点回 SEC 原文。你没有批准之前，系统不会修改你保存的投资判断。
 
 ## 目录
 
+- [一个具体的 Apple 例子](#一个具体的-apple-例子)
 - [🚀 快速开始](#-快速开始)
-- [为什么需要 AgenticThesis](#为什么需要-agenticthesis)
-- [投资哲学 → 工程决策](#投资哲学)
+- [AgenticThesis 能帮你解决什么](#agenticthesis-能帮你解决什么)
+- [这些术语用普通话怎么理解](#这些术语用普通话怎么理解)
 - [运行流程](#运行流程)
 - [系统架构](#系统架构)
 - [已实现能力](#已实现能力)
@@ -75,7 +87,7 @@ AGENTIC_THESIS_SEC_USER_AGENT="AgenticThesis your-email@example.com"
 uvx --from git+https://github.com/suvimatt/agentic-thesis agentic-thesis serve
 ```
 
-打开 [http://127.0.0.1:8000](http://127.0.0.1:8000)。首次启动会 seed 安装包内的 Apple thesis 和 filings。Thesis、手工导入的 disclosure、历史 runs、events、checkpoints 和已批准版本都会保存在 `~/.agentic-thesis/`，服务重启后继续使用。
+打开 [http://127.0.0.1:8000](http://127.0.0.1:8000)。首次启动已经准备好一份 Apple 投资判断和两份公司报告。你的投资判断、原始资料、历史检查、待确认结果和已经批准的更新都会保存在 `~/.agentic-thesis/`，关闭并重新启动后仍可继续使用。
 
 开发和确定性验证：
 
@@ -89,49 +101,43 @@ python3 -m venv .venv
 
 测试在适当位置使用确定性的检索和模型替代实现，因此不调用外部模型也能验证核心状态保证。
 
-## 为什么需要 AgenticThesis
+## AgenticThesis 能帮你解决什么
 
-普通 Filing 助手回答：*这份文件说了什么？*
-
-AgenticThesis 回答一个更困难、需要持久状态的问题：*这份新证据如何改变我原来对公司的判断？*
-
-| 一次性 Filing 助手 | AgenticThesis |
+| 业余投资者常见的问题 | AgenticThesis 的做法 |
 | --- | --- |
-| 总结单份文件 | 把新披露与版本化 Thesis 对照 |
-| 输出自由文本 | 输出结构化、逐条 claim 的 `ThesisDelta` |
-| 把聊天记录当作 Memory | 保存不可变的 `ThesisSnapshot` 版本 |
-| 可能输出无依据结论 | 验证每条引用是否真实存在于原文 |
-| 生成完成即结束 | 权威状态变更前必须经过 Human Review |
-| 重启后从头开始 | 从 SQLite checkpoint 恢复 |
+| 每天被股价和新闻带着走，慢慢忘了最初为什么投资 | 保存你每个时间点真正相信的理由 |
+| 一份上百页的公司报告，很难逐条对照自己的投资理由 | 自动找到与每条理由最相关的段落 |
+| AI 总结听起来很肯定，但不知道依据在哪里 | 每个结论都校验并展示原文 |
+| 新事实和最终决策混在一起 | 只提出更新建议，等你确认后才保存 |
+| 研究到一半关闭程序，回来又要从头开始 | 保存进度，重新启动后继续 |
 
-<a id="投资哲学"></a>
+这个产品帮助你有纪律地复查判断，不提供交易信号。证据不足或相互矛盾时，它会明确显示 **证据不足**，而不是硬猜答案。
 
-## 投资哲学 → 工程决策
+## 这些术语用普通话怎么理解
 
-AgenticThesis 把段永平“不懂不投”的原则落实为系统边界，而不是模仿某位投资者的人格或生成投资建议：
+代码和后面的工程说明仍会使用精确术语。在产品界面里，可以这样理解：
 
-- 证据不足或相互矛盾时输出 `unknown`，不强行给出结论；
-- 用户预先定义 falsifier，让反证成为一等检验条件；`possibly_invalidated` 必须匹配明确的 falsifier；
-- 系统从不输出 Buy / Sell / Hold 建议；
-- Thesis 和最终投资判断始终归用户所有；
-- 新证据只能生成可审核的 `ThesisDelta` proposal；只有明确通过 Human Review 后，系统才能修改权威 `ThesisSnapshot`。
+| 工程术语 | 对投资者的含义 |
+| --- | --- |
+| Investment thesis | 你为什么看好或持有一家公司的理由 |
+| Claim | 其中一条具体投资理由 |
+| Falsifier | 出现什么事实，就说明这条理由错了 |
+| Thesis delta | 新证据带来的一次修改建议 |
+| Human Review | 你亲自看证据，并决定是否保存修改 |
 
 ## 运行流程
 
 ```text
-手工 disclosure 或定时检查 SEC submissions
-→ 按 accession/content 去重并持久化 Filing
-→ ThesisSnapshot v1
-→ 在基准 Filing 和新 Filing 上执行混合检索
-→ 为每条 claim 构建受 token budget 约束的 EvidencePack
-→ 生成结构化 ThesisDelta
-→ 验证引用和 falsifier
-→ Human Review
-→ compare-and-swap 提交
-→ ThesisSnapshot v2 或 version_conflict
+写下你的投资理由，以及什么事实会证明它错了
+→ AgenticThesis 每天检查一次你指定的 SEC 报告
+→ 没有新报告：记录检查并停止
+→ 有新报告：逐条对照报告事实与原来的投资理由
+→ 显示 仍然成立 / 被削弱 / 可能不成立 / 证据不足
+→ 每个结果都链接到准确的原文
+→ 等你决定保持原判断，还是保存这次更新
 ```
 
-每条 claim 只会得到四种状态之一：`supported`、`weakened`、`possibly_invalidated` 或 `unknown`。
+系统内部把这四种结果存为 `supported`、`weakened`、`possibly_invalidated` 和 `unknown`。待确认的更新叫 `ThesisDelta`；你批准后，它才成为下一个不可变的 `ThesisSnapshot` 版本。
 
 ## 系统架构
 

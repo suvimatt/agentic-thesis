@@ -21,21 +21,23 @@
 - **为什么看好或持有这家公司**；
 - **出现什么事实，就说明这条理由错了**。
 
-系统每天检查一次 SEC 官方披露。有新报告时，它逐条对照你的投资理由，展示支持或反驳它的原文，并请你确认是否更新记录。没有新报告时，就只记录本次检查，不花钱调用 AI 分析。
+系统每天检查一次 SEC 官方披露。有新报告时，它逐条对照你对公司生意的判断，展示支持或反驳它的原文，并请你确认是否更新记录。没有新报告时，就只记录本次检查，不花钱调用 AI 分析。
 
 最终判断始终由你完成。AgenticThesis 不告诉你应该买入、卖出或持有。
+
+AgenticThesis 面向已经有明确投资理由、长期跟踪少量公司的自主投资者。它当前只维护**公司基本面 Thesis**；股票估值和最终投资行动是两个独立问题，继续由投资者负责。
 
 ## 一个具体的 Apple 例子
 
 项目自带的 Apple 案例在一次真实 API 运行中得到以下结果：
 
-| 你原来写下的投资理由 | 新报告里的事实 | 普通人能看懂的结果 |
+| 你原来写下的公司基本面判断 | 新报告里的事实 | 普通人能看懂的结果 |
 | --- | --- | --- |
 | Services 能帮助 Apple 保持较好的整体利润率 | Services 毛利率为 73.9%，Products 为 37.2%，Services 销售额增长 13% | **仍然成立** |
 | 大中华区仍是有韧性的需求来源 | 大中华区销售额下降 8%，主要因为 iPhone 和 iPad 销售下降 | **可能已经不成立** |
 | Apple 能处理零部件供应集中的风险 | Apple 仍依赖部分单一或有限供应商，但没有证据表明当前已发生重大生产中断 | **理由被削弱** |
 
-每个结果都能点回 SEC 原文。你没有批准之前，系统不会修改你保存的投资判断。
+每个结果都能点回 SEC 原文。你没有批准之前，系统不会修改你保存的公司 Thesis。
 
 ## 目录
 
@@ -87,7 +89,9 @@ AGENTIC_THESIS_SEC_USER_AGENT="AgenticThesis your-email@example.com"
 uvx --from git+https://github.com/suvimatt/agentic-thesis agentic-thesis serve
 ```
 
-打开 [http://127.0.0.1:8000](http://127.0.0.1:8000)。首次启动已经准备好一份 Apple 投资判断和两份公司报告。你的投资判断、原始资料、历史检查、待确认结果和已经批准的更新都会保存在 `~/.agentic-thesis/`，关闭并重新启动后仍可继续使用。
+打开 [http://127.0.0.1:8000](http://127.0.0.1:8000)。首次启动已经准备好一份 Apple 公司 Thesis 和两份公司报告。你的公司 Theses、原始资料、历史检查、待确认结果和已经批准的更新都会保存在 `~/.agentic-thesis/`，关闭并重新启动后仍可继续使用。
+
+在浏览器中输入公司名称、你为什么看好这门生意、这个理由为什么重要，以及一个能够证明它错了的事实，即可创建新的公司 Thesis，不需要理解 JSON 或内部 schema。
 
 开发和确定性验证：
 
@@ -106,7 +110,7 @@ python3 -m venv .venv
 | 业余投资者常见的问题 | AgenticThesis 的做法 |
 | --- | --- |
 | 每天被股价和新闻带着走，慢慢忘了最初为什么投资 | 保存你每个时间点真正相信的理由 |
-| 一份上百页的公司报告，很难逐条对照自己的投资理由 | 自动找到与每条理由最相关的段落 |
+| 一份上百页的公司报告，很难逐条对照自己的公司基本面判断 | 自动找到与每条判断最相关的段落 |
 | AI 总结听起来很肯定，但不知道依据在哪里 | 每个结论都校验并展示原文 |
 | 新事实和最终决策混在一起 | 只提出更新建议，等你确认后才保存 |
 | 研究到一半关闭程序，回来又要从头开始 | 保存进度，重新启动后继续 |
@@ -120,7 +124,7 @@ python3 -m venv .venv
 | 工程术语 | 对投资者的含义 |
 | --- | --- |
 | Investment thesis | 你为什么看好或持有一家公司的理由 |
-| Claim | 其中一条具体投资理由 |
+| Claim | 其中一条对公司生意的具体判断 |
 | Falsifier | 出现什么事实，就说明这条理由错了 |
 | Thesis delta | 新证据带来的一次修改建议 |
 | Human Review | 你亲自看证据，并决定是否保存修改 |
@@ -128,7 +132,7 @@ python3 -m venv .venv
 ## 运行流程
 
 ```text
-写下你的投资理由，以及什么事实会证明它错了
+写下你为什么看好这门生意，以及什么事实会证明自己错了
 → AgenticThesis 每天检查一次你指定的 SEC 报告
 → 没有新报告：记录检查并停止
 → 有新报告：逐条对照报告事实与原来的投资理由
@@ -143,12 +147,12 @@ python3 -m venv .venv
 
 [![AgenticThesis 系统架构](docs/agentic-thesis-architecture.svg)](docs/agentic-thesis-architecture.html)
 
-系统只有一个由应用拥有的 Workflow，而不是一组自治 Agent。LangGraph 协调六个明确的状态迁移；确定性代码负责检索融合、Context 预算、引用完整性和版本提交，LLM 只负责语义重排序和结构化 Thesis 比较。
+系统只有一个由应用拥有的 Workflow，而不是一组自治 Agent。LangGraph 协调六个明确的状态迁移；确定性代码负责检索融合、Context 预算、引用完整性和版本提交，LLM 只负责条件式语义重排序和结构化 Thesis 比较。
 
 | 边界 | 职责 | 实现 |
 | --- | --- | --- |
 | 接口 | 管理 theses 和 disclosures、检查指定 SEC filing types、异步启动任务、重放进度并接受审核决定 | FastAPI、后台 `asyncio` tasks、durable SSE |
-| 检索 | 在 Filing 语料中找到与 claim 相关的段落 | 确定性固定长度切块及 section 标签、BM25、进程内 Qdrant vector、RRF、API rerank |
+| 检索 | 在 Filing 语料中找到与 claim 相关的段落 | 确定性固定长度切块及 section 标签、BM25、进程内 Qdrant vector、RRF；仅在 BM25/vector top-1 不同且 top-3 交集少于 2 个 chunk 时调用 API rerank |
 | Working Context | 为每条 claim 提供最小、充分、可定位来源的证据 | query-conditioned extractive `EvidencePack`、每条 claim 固定 2,000-token 预算、evidence ID 和原文偏移 |
 | 语义分析 | 只根据提供的证据比较每条 Thesis claim | API Structured Outputs → 类型化 `ThesisDelta` |
 | 完整性门禁 | 阻止无依据结论和不安全状态变更 | quote/source 校验、falsifier 校验、exact-claim 校验、Human Review |
@@ -162,7 +166,7 @@ python3 -m venv .venv
 ## 已实现能力
 
 - 确定性的 SEC HTML 提取、带 section metadata 的固定长度切块、字符偏移和稳定 chunk ID；
-- BM25 + Qdrant local vector retrieval、Reciprocal Rank Fusion 和基于 OpenAI API 的 listwise reranking；
+- BM25 + Qdrant local vector retrieval 和 Reciprocal Rank Fusion；只有 BM25/vector top-1 不同且 top-3 交集少于 2 个 chunk 时才调用 listwise API reranking；
 - 带硬性 token budget、来源覆盖和 retained evidence ID 的 extractive Context compression；
 - 使用 OpenAI Structured Outputs 实现四态 `ThesisDelta` contract；
 - quote-to-source 引用校验；无依据输出会降级为 `unknown`；
@@ -172,7 +176,7 @@ python3 -m venv .venv
 - 多个相互隔离的 theses，以及手工 HTML/TXT disclosure 导入；
 - 每个 thesis 一个官方 SEC EDGAR monitor，可选择 filing types，按 accession/content 去重，支持手工 sync 和持久化的每日收集 schedule；
 - 异步 FastAPI、后台任务、有界且带 timeout 的模型调用、停止服务后的 checkpoint 恢复，以及不暴露 chain-of-thought 的实时 LangGraph events；
-- 无前端依赖的产品页面，支持 thesis/disclosure 管理、进度、引用、Context 压缩和 Human Review；
+- 无前端依赖的产品页面，提供 guided investment-case editor，并支持 disclosure 管理、进度、引用、Context 压缩和 Human Review；
 - 可安装的 `agentic-thesis serve` CLI、package sample data 和稳定的用户数据目录。
 
 ## 验证结果
@@ -181,22 +185,23 @@ python3 -m venv .venv
 
 | 检查项 | 观测结果 |
 | --- | ---: |
-| 测试 | 15 passed |
+| 测试 | 16 passed |
 | 全新环境 wheel 安装 | 在仓库外验证通过 |
 | 2023 提取 tokens / chunks | 48,923 / 109 |
 | 2024 提取 tokens / chunks | 48,752 / 110 |
-| BM25 Recall@5 | 1.00 |
-| 确定性 fake-vector Recall@5 | 0.60 |
-| RRF hybrid Recall@5 | 1.00 |
-| 确定性 fake-rerank Recall@5 | 1.00 |
-| 压缩后保留 gold evidence | 5 / 5 |
+| 分类 gold queries | 26：15 calibration / 11 held-out |
+| BM25 / fake-vector / hybrid Recall@5 | 0.846 / 0.538 / 0.769 |
+| always-rerank / conditional-rerank Recall@5 | 0.885 / 0.846 |
+| BM25 / vector / hybrid / always / conditional MRR | 0.581 / 0.369 / 0.544 / 0.663 / 0.635 |
+| Conditional rerank 调用 | 15 / 26 |
+| held-out conditional Recall@5 / MRR | 1.00 / 0.652 |
 | 伪造引用 | 降级为 `unknown` |
 | 重启与恢复 | 使用相同 run ID 提交 v2 |
 | 旧版本写入 | 返回 `version_conflict` / HTTP 409 |
 
-Recall 使用 `evals/gold.json` 中的五个案例。确定性的 vector 和 rerank 数据用于验证编排与指标计算。
+`evals/gold.json` 的 26 条 case 横跨两份 filing，覆盖 lexical、numeric、semantic、risk 和 regulatory 问题。确定性 vector/rerank substitute 让 ablation 不调用外部模型也能重复执行；它验证的是 policy 行为与指标计算，不是模型质量。
 
-仓库内的 `evals/live_results.json` 记录了一次覆盖两份 Filing（219 chunks）的真实 API 运行，模型为 `qwen3.7-text-embedding` 和 `gpt-5.6-luna`：
+仓库中的 `evals/live_results.json` 保留了较早一次覆盖两份 Filing、219 个 chunks、5 条 query 的真实 API 运行，使用 `qwen3.7-text-embedding` 和 `gpt-5.6-luna`：
 
 | Live 检查项 | 观测结果 |
 | --- | ---: |
@@ -208,7 +213,7 @@ Recall 使用 `evals/gold.json` 中的五个案例。确定性的 vector 和 rer
 | 五条 query rerank evaluation | 38.17 s |
 | 三条 claim structured analysis | 16.18 s |
 
-在这五条 query 上，reranker 保持了 Recall@5，但没有改善 gold position，其中一个案例从第 4 位降到第 5 位。这些时间来自一次实测运行，不代表 latency benchmark 或 production SLO。
+较早的 reranker 保住了 Recall@5，但没有改善 gold position，其中一条从第 4 降到第 5。当前还没有记录 26 条 query 的 live rerun，因此 v0.5 目前只报告可重复的 deterministic ablation。这些耗时只代表一次历史运行，不是 latency benchmark 或 production SLO。
 
 重新运行 live evaluation：
 
@@ -265,7 +270,8 @@ curl -X POST http://localhost:8000/theses/aapl-primary/sync
 - scheduler 只是一个每小时判断本地 due state、每 24 小时最多自动成功访问 SEC 一次的进程内 `asyncio` loop，不是分布式任务系统或通知服务；
 - Qdrant 当前运行在进程内；SQLite 持久化 Workflow 和 Thesis 状态；
 - 没有 portfolio management、valuation、Multi-Agent role、distributed scheduler 或 queue；
-- 五条 query 的 eval 有意保持很小；不声称已有成本、throughput、p50、p95 或 production-readiness 数据。
+- 当前 gold set 包含 Apple 两份 filing 的 26 条问题，但还缺少第二家公司和新的 26-query live API 结果；
+- 没有实测 throughput、p50、p95 或 production-readiness 声明。
 
 ## 开源协议
 

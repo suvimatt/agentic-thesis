@@ -23,9 +23,13 @@
     button:focus-visible,a:focus-visible { outline:3px solid #8bc5a3; outline-offset:2px; }
     input,select,textarea { width:100%; border:1px solid var(--line); border-radius:9px; padding:10px 12px; background:white; color:var(--ink); font:inherit; }
     input[type="checkbox"] { width:auto; }
-    textarea { min-height:140px; font-family:ui-monospace,SFMono-Regular,monospace; font-size:12px; }
+    textarea { min-height:96px; resize:vertical; }
     label { display:grid; gap:5px; color:var(--muted); font-size:13px; }
     form { display:grid; gap:12px; }
+    fieldset { min-width:0; margin:0; }
+    .thesis-claim { display:grid; gap:10px; border:1px solid var(--line); border-radius:12px; padding:14px; }
+    .thesis-claim legend { padding:0 6px; color:var(--ink); font-weight:700; }
+    #thesis-claims { display:grid; gap:12px; }
     details { border-top:1px solid var(--line); padding-top:14px; margin-top:14px; }
     summary { cursor:pointer; font-weight:700; }
     .grid { display:grid; grid-template-columns:minmax(0,1.35fr) minmax(290px,.65fr); gap:18px; }
@@ -55,17 +59,17 @@
 <main>
   <header>
     <div>
-      <div class="eyebrow">A daily check on your investment reasons</div>
+      <div class="eyebrow">A daily check on your company thesis</div>
       <h1>Track why you own a company,<br>not every headline.</h1>
       <p class="lede">Write down why you invested and what would prove you wrong. AgenticThesis checks official filings, shows which reasons changed, and links every conclusion to the source. You decide what to save.</p>
     </div>
-    <div><label for="thesis">Company and investment case</label><select id="thesis"></select><button id="start">Check saved filings</button></div>
+    <div><label for="thesis">Company thesis</label><select id="thesis"></select><button id="start">Check saved filings</button></div>
   </header>
 
   <div class="grid">
     <section class="card">
-      <div class="row between"><h2>What changed in your investment case?</h2><span id="status" class="badge">Ready</span></div>
-      <div id="claims" class="empty">Choose a company and check its saved filings. Each investment reason will be marked as still supported, weakened, possibly broken, or lacking evidence.</div>
+      <div class="row between"><h2>What changed in your company thesis?</h2><span id="status" class="badge">Ready</span></div>
+      <div id="claims" class="empty">Choose a company and check its saved filings. Each reason you believe in the business will be marked as still supported, weakened, possibly broken, or lacking evidence.</div>
     </section>
     <aside class="card">
       <h2>What AgenticThesis is doing</h2>
@@ -103,10 +107,19 @@
         </form>
       </details>
       <details>
-        <summary>Add an investment case</summary>
+        <summary>Create a company thesis</summary>
         <form id="thesis-form">
-          <label>Investment case JSON (advanced)<textarea id="thesis-json" required placeholder='{"thesis_id":"my-thesis","company":"Example Inc.","version":1,"claims":[{"claim_id":"growth","statement":"Growth remains durable.","rationale":"Recurring demand.","falsifiers":["Revenue declines"],"evidence_refs":[]}]}'></textarea></label>
-          <button type="submit">Save investment case</button>
+          <label>Company name<input id="thesis-company" required placeholder="Example: Apple Inc."></label>
+          <div id="thesis-claims">
+            <fieldset class="thesis-claim">
+              <legend>Investment reason 1</legend>
+              <label>Why do you believe in this business?<textarea class="claim-statement" required placeholder="Example: Services can support durable margins."></textarea></label>
+              <label>Why do you believe this?<textarea class="claim-rationale" required placeholder="Explain why this matters to the business."></textarea></label>
+              <label>What fact would prove this wrong?<textarea class="claim-falsifier" required placeholder="Example: Services margin declines for a sustained period."></textarea></label>
+              <button type="button" class="secondary remove-thesis-claim" disabled>Remove reason</button>
+            </fieldset>
+          </div>
+          <div class="row"><button id="add-thesis-claim" type="button" class="secondary">Add another reason</button><button type="submit">Save company thesis</button></div>
         </form>
       </details>
       <details>
@@ -140,7 +153,7 @@
     possibly_invalidated:'May no longer hold', unknown:'Not enough evidence'
   };
   const stepLabels = {
-    retrieve_claims:'Finding evidence for each investment reason',
+    retrieve_claims:'Finding evidence for each reason you believe in the business',
     build_evidence_packs:'Keeping only the most relevant passages',
     analyze_deltas:'Comparing new facts with your reasons',
     validate_citations:'Checking every quote against the source',
@@ -172,7 +185,9 @@
     const compression = event.claims?.some(claim => claim.tokens_before != null)
       ? event.claims.map(claim => `${claim.tokens_before}→${claim.tokens_after} tokens`).join(', ')
       : event.claims?.some(claim => claim.retrieval_ms != null)
-        ? event.claims.map(claim => `${claim.retrieval_ms}+${claim.rerank_ms} ms`).join(', ')
+        ? event.claims.map(claim => claim.rerank_triggered === false
+          ? `${claim.retrieval_ms} ms · hybrid accepted`
+          : `${claim.retrieval_ms}+${claim.rerank_ms} ms · reranked`).join(', ')
         : event.latency_ms != null ? `${event.latency_ms} ms` : '';
     item.innerHTML = `<span class="dot"></span><span>${escapeHtml(stepLabels[event.node] || event.node)}</span><code>${escapeHtml(compression)}</code>`;
     $('steps').append(item);
@@ -326,7 +341,7 @@
     $('review').style.display = 'none';
     setStatus('running');
     const thesisId = $('thesis').value;
-    if (!thesisId) return showError('Add an investment case first.');
+    if (!thesisId) return showError('Add a company thesis first.');
     runId = `${thesisId}-${crypto.randomUUID()}`;
     try {
       await readResponse(await fetch('/runs', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({run_id:runId, thesis_id:thesisId})}));
@@ -365,17 +380,60 @@
     }
   }
 
+  function claimEditorMarkup(index) {
+    return `<fieldset class="thesis-claim">
+      <legend>Investment reason ${index + 1}</legend>
+      <label>Why do you believe in this business?<textarea class="claim-statement" required placeholder="Example: Services can support durable margins."></textarea></label>
+      <label>Why do you believe this?<textarea class="claim-rationale" required placeholder="Explain why this matters to the business."></textarea></label>
+      <label>What fact would prove this wrong?<textarea class="claim-falsifier" required placeholder="Example: Services margin declines for a sustained period."></textarea></label>
+      <button type="button" class="secondary remove-thesis-claim">Remove reason</button>
+    </fieldset>`;
+  }
+
+  function refreshClaimEditors() {
+    const editors = [...document.querySelectorAll('.thesis-claim')];
+    editors.forEach((editor, index) => {
+      editor.querySelector('legend').textContent = `Investment reason ${index + 1}`;
+      editor.querySelector('.remove-thesis-claim').disabled = editors.length === 1;
+    });
+  }
+
+  function resetThesisEditor() {
+    $('thesis-form').reset();
+    $('thesis-claims').innerHTML = claimEditorMarkup(0);
+    refreshClaimEditors();
+  }
+
   $('start').addEventListener('click', start);
   $('thesis').addEventListener('change', () => Promise.all([loadDisclosures(), loadMonitor()]));
   $('approve').addEventListener('click', () => review('approve'));
   $('reject').addEventListener('click', () => review('reject'));
+  $('add-thesis-claim').addEventListener('click', () => {
+    const index = document.querySelectorAll('.thesis-claim').length;
+    $('thesis-claims').insertAdjacentHTML('beforeend', claimEditorMarkup(index));
+    refreshClaimEditors();
+  });
+  $('thesis-claims').addEventListener('click', event => {
+    if (!event.target.classList.contains('remove-thesis-claim')) return;
+    event.target.closest('.thesis-claim').remove();
+    refreshClaimEditors();
+  });
   $('thesis-form').addEventListener('submit', async event => {
     event.preventDefault();
     try {
-      const thesis = JSON.parse($('thesis-json').value);
+      const company = $('thesis-company').value.trim();
+      const claims = [...document.querySelectorAll('.thesis-claim')].map((editor, index) => ({
+        claim_id:`reason-${index + 1}`,
+        statement:editor.querySelector('.claim-statement').value.trim(),
+        rationale:editor.querySelector('.claim-rationale').value.trim(),
+        falsifiers:[editor.querySelector('.claim-falsifier').value.trim()],
+        evidence_refs:[]
+      }));
+      const slug = company.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'company';
+      const thesis = {thesis_id:`${slug}-${crypto.randomUUID().slice(0, 8)}`, company, version:1, claims};
       await readResponse(await fetch('/theses', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify(thesis)}));
       await loadTheses(thesis.thesis_id);
-      $('thesis-json').value = '';
+      resetThesisEditor();
     } catch (error) {
       showError(error.message);
     }

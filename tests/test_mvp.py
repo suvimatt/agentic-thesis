@@ -27,6 +27,7 @@ from agentic_thesis.rag import (
     chunk_filing,
     enforce_citations,
     gold_rank,
+    mean_reciprocal_rank,
     recall_at_k,
 )
 from agentic_thesis.workflow import AgenticThesisWorkflow
@@ -104,11 +105,30 @@ def test_gold_rank_reports_one_based_position_or_missing() -> None:
 
 async def test_hybrid_retrieval_reports_measured_recall_at_5() -> None:
     root = Path(__file__).parents[1]
-    filing = files("agentic_thesis").joinpath(
-        "sample_data", "filings", "aapl-2024-10-k.html"
-    ).read_text(errors="ignore")
-    chunks = chunk_filing(filing, accession="aapl-2024", filing_date="2024-09-28")
+    chunks = [
+        chunk
+        for accession, filing_date, filename in (
+            ("aapl-2023", "2023-09-30", "aapl-2023-10-k.html"),
+            ("aapl-2024", "2024-09-28", "aapl-2024-10-k.html"),
+        )
+        for chunk in chunk_filing(
+            files("agentic_thesis")
+            .joinpath("sample_data", "filings", filename)
+            .read_text(errors="ignore"),
+            accession=accession,
+            filing_date=filing_date,
+        )
+    ]
     cases = json.loads((root / "evals/gold.json").read_text())
+    assert len(cases) >= 20
+    assert {case["split"] for case in cases} == {"calibration", "held_out"}
+    assert {
+        "lexical",
+        "numeric",
+        "semantic",
+        "risk",
+        "regulatory",
+    }.issubset({case["category"] for case in cases})
     gold = {case["query"]: case["gold_chunk_id"] for case in cases}
     by_id = {chunk.chunk_id: chunk for chunk in chunks}
     assert all(case["anchor"].lower() in by_id[case["gold_chunk_id"]].text.lower() for case in cases)
@@ -134,16 +154,108 @@ async def test_hybrid_retrieval_reports_measured_recall_at_5() -> None:
             query: [hit.chunk.chunk_id for hit in await retriever.search(query, mode=mode, limit=5)]
             for query in gold
         }
-        for mode in ("bm25", "vector", "hybrid", "rerank")
+        for mode in ("bm25", "vector", "hybrid", "rerank", "conditional")
     }
     metrics = {mode: recall_at_k(result, gold, 5) for mode, result in results.items()}
 
-    assert metrics == {"bm25": 1.0, "vector": 0.6, "hybrid": 1.0, "rerank": 1.0}
+    assert metrics == {
+        "bm25": 22 / 26,
+        "vector": 14 / 26,
+        "hybrid": 20 / 26,
+        "rerank": 23 / 26,
+        "conditional": 22 / 26,
+    }
+    assert {
+        mode: round(mean_reciprocal_rank(mode_results, gold), 3)
+        for mode, mode_results in results.items()
+    } == {
+        "bm25": 0.581,
+        "vector": 0.369,
+        "hybrid": 0.544,
+        "rerank": 0.663,
+        "conditional": 0.635,
+    }
+    vectors = [await retriever._vector_ids(query) for query in gold]
+    assert sum(
+        retriever._retrievers_disagree(retriever._bm25_ids(query), vector_ids)
+        for query, vector_ids in zip(gold, vectors, strict=True)
+    ) == 15
+    held_out = {
+        case["query"]: case["gold_chunk_id"]
+        for case in cases
+        if case["split"] == "held_out"
+    }
+    assert recall_at_k(results["conditional"], held_out, 5) == 1.0
+    assert round(mean_reciprocal_rank(results["conditional"], held_out), 3) == 0.652
     for case in cases:
         hits = await retriever.search(case["query"], mode="rerank", limit=5)
         pack = build_evidence_pack("gold-eval", case["query"], hits, token_budget=2_000)
-        assert f'e:{case["gold_chunk_id"]}' in pack.retained_evidence_ids
+        if case["gold_chunk_id"] in {hit.chunk.chunk_id for hit in hits}:
+            assert f'e:{case["gold_chunk_id"]}' in pack.retained_evidence_ids
         assert pack.tokens_after <= 2_000
+
+
+async def test_conditional_rerank_only_runs_when_retrievers_disagree() -> None:
+    assert HybridRetriever._retrievers_disagree(
+        ["a", "b", "c"], ["d", "e", "a"]
+    )
+    assert not HybridRetriever._retrievers_disagree(
+        ["a", "b", "c"], ["d", "a", "b"]
+    )
+    assert not HybridRetriever._retrievers_disagree(
+        ["a", "b", "c"], ["a", "d", "e"]
+    )
+
+    chunks = [
+        DisclosureChunk(
+            chunk_id="services",
+            accession="test",
+            filing_date="2024-01-01",
+            section="Services",
+            text="Services revenue and gross margin increased.",
+            start_char=0,
+            end_char=44,
+        ),
+        DisclosureChunk(
+            chunk_id="hardware",
+            accession="test",
+            filing_date="2024-01-01",
+            section="Products",
+            text="Hardware unit sales declined.",
+            start_char=45,
+            end_char=74,
+        ),
+    ]
+    rerank_calls: list[str] = []
+
+    async def rerank(query: str, candidates: list[DisclosureChunk]) -> list[str]:
+        rerank_calls.append(query)
+        return [chunk.chunk_id for chunk in candidates]
+
+    async def agreeing_embed(texts: list[str]) -> list[list[float]]:
+        return [
+            [1.0, 0.0] if "services" in text.lower() else [0.0, 1.0]
+            for text in texts
+        ]
+
+    agreeing = HybridRetriever(chunks, embed=agreeing_embed, rerank=rerank)
+    await agreeing.index()
+    agreeing_hits, agreeing_timings = await agreeing.search_with_timings(
+        "services revenue margin",
+        limit=2,
+    )
+
+    assert agreeing_hits[0].chunk.chunk_id == "services"
+    assert agreeing_timings["rerank_triggered"] is False
+    assert rerank_calls == []
+
+    _, always_timings = await agreeing.search_with_timings(
+        "services revenue margin",
+        limit=2,
+        rerank_policy="always",
+    )
+    assert always_timings["rerank_triggered"] is True
+    assert rerank_calls == ["services revenue margin"]
 
 
 def test_evidence_pack_respects_budget_and_rejects_forged_quote() -> None:
@@ -467,11 +579,19 @@ async def test_langgraph_resumes_after_restart_and_rejects_stale_commit(tmp_path
         assert page.headers["content-type"].startswith("text/html")
         assert "Track why you own a company" in page.text
         assert "what would prove you wrong" in page.text
-        assert "What changed in your investment case" in page.text
+        assert "What changed in your company thesis" in page.text
         assert "Review the proposed update" in page.text
         assert "Recent checks" in page.text
         assert 'id="runs"' in page.text
-        assert "Add an investment case" in page.text
+        assert "Create a company thesis" in page.text
+        assert 'id="thesis-company"' in page.text
+        assert 'id="thesis-claims"' in page.text
+        assert 'id="add-thesis-claim"' in page.text
+        assert 'class="thesis-claim"' in page.text
+        assert "Why do you believe this?" in page.text
+        assert "What fact would prove this wrong?" in page.text
+        assert "Investment case JSON" not in page.text
+        assert 'id="thesis-json"' not in page.text
         assert "Add a company filing manually" in page.text
         assert "Keep my current view" in page.text
         assert "Save this evidence update" in page.text
@@ -481,6 +601,24 @@ async def test_langgraph_resumes_after_restart_and_rejects_stale_commit(tmp_path
         assert "Review thesis changes" not in page.text
         assert "A stale base version returns HTTP 409" not in page.text
         assert "ThesisSnapshot v1" not in page.text
+
+        guided_thesis = {
+            "thesis_id": "guided-test",
+            "company": "Example Co.",
+            "version": 1,
+            "claims": [
+                {
+                    "claim_id": "reason-1",
+                    "statement": "Recurring revenue supports durable cash flow.",
+                    "rationale": "Renewals make revenue more predictable.",
+                    "falsifiers": ["Renewal rates decline for a sustained period."],
+                    "evidence_refs": [],
+                }
+            ],
+        }
+        created = await client.post("/theses", json=guided_thesis)
+        assert created.status_code == 201
+        assert (await client.get("/theses/guided-test")).json() == guided_thesis
 
         started = await client.post(
             "/runs",

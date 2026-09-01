@@ -150,7 +150,7 @@ class AgenticThesisWorkflow:
         self,
         retriever: Any,
         query: str,
-    ) -> tuple[list[RetrievalHit], dict[str, float]]:
+    ) -> tuple[list[RetrievalHit], dict[str, float | bool]]:
         async with self.model_calls, asyncio.timeout(45):
             return await retriever.search_with_timings(query, limit=6)
 

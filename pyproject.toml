@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agentic-thesis"
-version = "0.4.0"
-description = "A stateful RAG system for reviewing how disclosures change an investment thesis."
+version = "0.6.0"
+description = "An evidence-backed thesis monitoring system for long-term individual investors."
 requires-python = ">=3.11"
 dependencies = [
   "fastapi>=0.116,<1",

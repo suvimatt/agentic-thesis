@@ -242,11 +242,17 @@ class HybridRetriever:
         self,
         query: str,
         *,
-        mode: Literal["bm25", "vector", "hybrid", "rerank"] = "rerank",
+        mode: Literal["bm25", "vector", "hybrid", "rerank", "conditional"] = "conditional",
         limit: int = 5,
     ) -> list[RetrievalHit]:
-        if mode == "rerank":
-            return (await self.search_with_timings(query, limit=limit))[0]
+        if mode in {"rerank", "conditional"}:
+            return (
+                await self.search_with_timings(
+                    query,
+                    limit=limit,
+                    rerank_policy="always" if mode == "rerank" else "conditional",
+                )
+            )[0]
         bm25_ids = self._bm25_ids(query)
         if mode == "bm25":
             ranked = [(chunk_id, float(len(bm25_ids) - rank)) for rank, chunk_id in enumerate(bm25_ids)]
@@ -263,10 +269,29 @@ class HybridRetriever:
         query: str,
         *,
         limit: int = 5,
-    ) -> tuple[list[RetrievalHit], dict[str, float]]:
+        rerank_policy: Literal["always", "conditional"] = "conditional",
+    ) -> tuple[list[RetrievalHit], dict[str, float | bool]]:
         started = perf_counter()
-        ranked = self.rrf([self._bm25_ids(query), await self._vector_ids(query)])
+        bm25_ids = self._bm25_ids(query)
+        vector_ids = await self._vector_ids(query)
+        ranked = self.rrf([bm25_ids, vector_ids])
         retrieval_ms = round((perf_counter() - started) * 1_000, 3)
+        rerank_triggered = rerank_policy == "always" or self._retrievers_disagree(
+            bm25_ids,
+            vector_ids,
+        )
+        if not rerank_triggered:
+            return (
+                [
+                    RetrievalHit(self.by_id[chunk_id], score)
+                    for chunk_id, score in ranked[:limit]
+                ],
+                {
+                    "retrieval_ms": retrieval_ms,
+                    "rerank_ms": 0.0,
+                    "rerank_triggered": False,
+                },
+            )
         started = perf_counter()
         ordered = await self.rerank(query, [self.by_id[chunk_id] for chunk_id, _ in ranked])
         known = [chunk_id for chunk_id in ordered if chunk_id in dict(ranked)]
@@ -279,7 +304,17 @@ class HybridRetriever:
         return hits, {
             "retrieval_ms": retrieval_ms,
             "rerank_ms": round((perf_counter() - started) * 1_000, 3),
+            "rerank_triggered": True,
         }
+
+    @staticmethod
+    def _retrievers_disagree(bm25_ids: list[str], vector_ids: list[str]) -> bool:
+        if not bm25_ids or not vector_ids:
+            return False
+        return (
+            bm25_ids[0] != vector_ids[0]
+            and len(set(bm25_ids[:3]) & set(vector_ids[:3])) < 2
+        )
 
 
 def recall_at_k(results: dict[str, list[str]], gold: dict[str, str], k: int) -> float:
@@ -289,6 +324,15 @@ def recall_at_k(results: dict[str, list[str]], gold: dict[str, str], k: int) -> 
 
 def gold_rank(ranking: list[str], gold_id: str) -> int | None:
     return ranking.index(gold_id) + 1 if gold_id in ranking else None
+
+
+def mean_reciprocal_rank(results: dict[str, list[str]], gold: dict[str, str]) -> float:
+    reciprocal_ranks = [
+        1.0 / rank
+        for query, gold_id in gold.items()
+        if (rank := gold_rank(results.get(query, []), gold_id)) is not None
+    ]
+    return sum(reciprocal_ranks) / len(gold) if gold else 0.0
 
 
 def _trim_extractively(text: str, query: str, max_tokens: int) -> str:

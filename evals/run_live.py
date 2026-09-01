@@ -17,6 +17,7 @@ from agentic_thesis.rag import (
     chunk_filing,
     enforce_citations,
     gold_rank,
+    mean_reciprocal_rank,
     recall_at_k,
 )
 
@@ -77,24 +78,26 @@ async def main() -> None:
     gold = {case["query"]: case["gold_chunk_id"] for case in cases}
     results: dict[str, dict[str, list[str]]] = {}
     retrieval_ms: dict[str, float] = {}
-    for mode in ("bm25", "vector", "hybrid", "rerank"):
+    rerank_triggers: dict[str, int] = {"rerank": 0, "conditional": 0}
+    for mode in ("bm25", "vector", "hybrid", "rerank", "conditional"):
         started = perf_counter()
-        results[mode] = {
-            query: [
-                hit.chunk.chunk_id
-                for hit in await retriever.search(
+        results[mode] = {}
+        for query in gold:
+            if mode in {"rerank", "conditional"}:
+                hits, timings = await retriever.search_with_timings(
                     query,
-                    mode=mode,
-                    limit=8 if mode in {"hybrid", "rerank"} else 5,
+                    limit=5,
+                    rerank_policy="always" if mode == "rerank" else "conditional",
                 )
-            ]
-            for query in gold
-        }
+                rerank_triggers[mode] += int(timings["rerank_triggered"])
+            else:
+                hits = await retriever.search(query, mode=mode, limit=5)
+            results[mode][query] = [hit.chunk.chunk_id for hit in hits]
         retrieval_ms[mode] = round((perf_counter() - started) * 1_000, 1)
 
     retained = 0
     for case in cases:
-        hits = await retriever.search(case["query"], mode="rerank", limit=5)
+        hits = await retriever.search(case["query"], mode="conditional", limit=5)
         pack = build_evidence_pack(
             "gold-eval",
             case["query"],
@@ -108,7 +111,7 @@ async def main() -> None:
     )
     claim_hits = await asyncio.gather(
         *[
-            retriever.search(claim.statement, mode="rerank", limit=6)
+            retriever.search(claim.statement, mode="conditional", limit=6)
             for claim in thesis.claims
         ]
     )
@@ -126,6 +129,21 @@ async def main() -> None:
     analysis_ms = round((perf_counter() - started) * 1_000, 1)
     validated = enforce_citations(delta, packs, thesis)
 
+    def grouped_metrics(field: str) -> dict[str, dict[str, dict[str, float | int]]]:
+        grouped: dict[str, dict[str, dict[str, float | int]]] = {}
+        for value in sorted({case[field] for case in cases}):
+            queries = {case["query"] for case in cases if case[field] == value}
+            group_gold = {query: gold[query] for query in queries}
+            grouped[value] = {
+                mode: {
+                    "cases": len(queries),
+                    "recall_at_5": recall_at_k(mode_results, group_gold, 5),
+                    "mrr": mean_reciprocal_rank(mode_results, group_gold),
+                }
+                for mode, mode_results in results.items()
+            }
+        return grouped
+
     report = {
         "run_at": datetime.now(UTC).isoformat(),
         "models": {
@@ -133,14 +151,28 @@ async def main() -> None:
             "analysis_and_rerank": model.model,
         },
         "corpus_chunks": len(chunks),
+        "gold_cases": len(cases),
         "recall_at_5": {
             mode: recall_at_k(mode_results, gold, 5)
             for mode, mode_results in results.items()
+        },
+        "mrr": {
+            mode: mean_reciprocal_rank(mode_results, gold)
+            for mode, mode_results in results.items()
+        },
+        "by_category": grouped_metrics("category"),
+        "by_split": grouped_metrics("split"),
+        "rerank_policy": {
+            "rule": "rerank when BM25/vector top-1 differ and top-3 overlap is below 2",
+            "always_calls": rerank_triggers["rerank"],
+            "conditional_calls": rerank_triggers["conditional"],
+            "conditional_trigger_rate": rerank_triggers["conditional"] / len(cases),
         },
         "rerank_gold_position": {
             query: {
                 "hybrid": gold_rank(results["hybrid"][query], gold_id),
                 "rerank": gold_rank(results["rerank"][query], gold_id),
+                "conditional": gold_rank(results["conditional"][query], gold_id),
             }
             for query, gold_id in gold.items()
         },

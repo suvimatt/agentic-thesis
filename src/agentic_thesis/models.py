@@ -37,6 +37,15 @@ class DisclosureChunk(BaseModel):
     source_url: str = ""
 
 
+class DisclosureDocument(BaseModel):
+    document_id: str = Field(min_length=1, max_length=200)
+    thesis_id: str = Field(min_length=1, max_length=200)
+    accession: str = Field(min_length=1, max_length=200)
+    filing_date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+    source_url: str = ""
+    content: str = Field(min_length=1, max_length=10_000_000)
+
+
 class EvidenceItem(BaseModel):
     evidence_id: str
     chunk_id: str

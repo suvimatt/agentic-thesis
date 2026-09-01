@@ -42,24 +42,16 @@ If this project helps you build more reliable AI research systems, please consid
 
 ## 🚀 Quick Start
 
-### 1. Install
+### 1. Configure model endpoints
 
-Python 3.11+ is required.
-
-```bash
-git clone https://github.com/suvimatt/agentic-thesis.git
-cd agentic-thesis
-python3 -m venv .venv
-.venv/bin/python -m pip install -e '.[test]'
-```
-
-### 2. Configure model endpoints
+Create `~/.agentic-thesis/.env` (or use `.env` in the current directory):
 
 ```bash
-cp .env.example .env
+mkdir -p ~/.agentic-thesis
+$EDITOR ~/.agentic-thesis/.env
 ```
 
-Set these values in `.env`:
+Set these values:
 
 | Variable | Purpose |
 | --- | --- |
@@ -70,17 +62,21 @@ Set these values in `.env`:
 | `EMBEDDING_BASE_URL` | OpenAI-compatible embedding endpoint |
 | `AGENTIC_THESIS_EMBEDDING_MODEL` | Embedding model name |
 
-### 3. Start the application
+### 2. Start the application
 
 ```bash
-.venv/bin/uvicorn agentic_thesis.api:app --env-file .env --port 8000
+uvx --from git+https://github.com/suvimatt/agentic-thesis agentic-thesis serve
 ```
 
-Open [http://127.0.0.1:8000](http://127.0.0.1:8000). Startup indexes the two checked-in Apple filings; the product page then walks through filing retrieval, evidence comparison, and Human Review.
+Open [http://127.0.0.1:8000](http://127.0.0.1:8000). The first start seeds the packaged Apple thesis and filings. Theses, imported disclosures, run history, events, checkpoints, and approved versions persist under `~/.agentic-thesis/` across restarts.
 
-### 4. Verify the deterministic path
+For development and deterministic verification:
 
 ```bash
+git clone https://github.com/suvimatt/agentic-thesis.git
+cd agentic-thesis
+python3 -m venv .venv
+.venv/bin/python -m pip install -e '.[test]'
 .venv/bin/pytest -q -p no:cacheprovider
 ```
 
@@ -136,12 +132,12 @@ The system has one application-owned workflow, not a collection of autonomous ag
 
 | Boundary | Responsibility | Implementation |
 | --- | --- | --- |
-| Interface | Start work asynchronously, stream progress, expose state, and accept one review decision | FastAPI, background `asyncio` task, SSE, four endpoints |
+| Interface | Manage theses and disclosures, start work asynchronously, replay progress, and accept review decisions | FastAPI, background `asyncio` tasks, durable SSE |
 | Retrieval | Find claim-relevant passages across the filing corpus | deterministic section-labelled fixed-size chunks, BM25, in-process Qdrant vectors, RRF, API rerank |
 | Working Context | Give each claim the smallest sufficient, source-addressable evidence | query-conditioned extractive `EvidencePack`, fixed 2,000-token per-claim budget, evidence IDs and source offsets |
 | Semantic analysis | Compare every thesis claim with supplied evidence only | API Structured Outputs → typed `ThesisDelta` |
 | Integrity gates | Prevent unsupported conclusions or unsafe state changes | quote/source validation, falsifier validation, exact-claim validation, Human Review |
-| Durable state | Resume a paused run and preserve authoritative thesis history | LangGraph SQLite checkpoints, immutable `ThesisSnapshot`s, thesis head |
+| Durable state | Resume active or paused runs and preserve authoritative thesis history | LangGraph SQLite checkpoints, durable run events, immutable `ThesisSnapshot`s, thesis head |
 | Commit | Apply an approved delta only if its base version is still current | SQLite compare-and-swap → `vN+1` or `version_conflict` |
 
 The two checked-in SEC filings contain 97,675 `cl100k_base` tokens after deterministic HTML extraction. A model call never receives the full filings: it receives a per-claim, cited `EvidencePack`. This keeps **Context** (temporary working evidence), **Memory** (versioned thesis), and **Workflow State** (resumable execution) separate.
@@ -157,8 +153,11 @@ The editable diagram source is [`docs/agentic-thesis-architecture.html`](docs/ag
 - quote-to-source citation validation; unsupported output is downgraded to `unknown`;
 - a six-node LangGraph with Human Review interrupt and SQLite checkpoint/resume;
 - immutable thesis snapshots and compare-and-swap conflict protection;
-- async FastAPI, background runs, bounded/timeout-wrapped model calls, cancellation-safe shutdown, and live LangGraph SSE events with per-claim retrieval/rerank, LLM-node, and cumulative timings but no chain-of-thought;
-- a dependency-free product page for progress, claim deltas, citations, Context compression, and Human Review.
+- persistent run history and sequenced SSE replay with `Last-Event-ID` across browser or service restarts;
+- multiple isolated theses plus manual HTML/TXT disclosure import;
+- async FastAPI, background runs, bounded/timeout-wrapped model calls, checkpoint recovery after shutdown, and live LangGraph events without chain-of-thought;
+- a dependency-free product page for thesis/disclosure management, progress, citations, Context compression, and Human Review;
+- an installable `agentic-thesis serve` CLI with packaged sample data and a stable user data directory.
 
 ## Verified Results
 
@@ -166,7 +165,8 @@ Observed on the checked-in fixtures on 2026-09-01:
 
 | Check | Observed result |
 | --- | ---: |
-| Tests | 9 passed |
+| Tests | 12 passed |
+| Clean wheel install | passed outside the repository |
 | 2023 extracted tokens / chunks | 48,923 / 109 |
 | 2024 extracted tokens / chunks | 48,752 / 110 |
 | BM25 Recall@5 | 1.00 |
@@ -209,7 +209,7 @@ Start and review a run through the API:
 ```bash
 curl -X POST http://localhost:8000/runs \
   -H 'content-type: application/json' \
-  -d '{"run_id":"aapl-2024-review"}'
+  -d '{"run_id":"aapl-2024-review","thesis_id":"aapl-primary"}'
 
 curl -N http://localhost:8000/runs/aapl-2024-review/events
 
@@ -218,7 +218,7 @@ curl -X POST http://localhost:8000/runs/aapl-2024-review/review \
   -d '{"action":"approve"}'
 ```
 
-Other endpoints are `GET /runs/{run_id}` and the generated `/docs` OpenAPI page.
+The browser can also create/list theses, import/list disclosures, list historical runs, and reopen pending reviews. The generated `/docs` page documents the same HTTP API.
 
 ## 90-Second Verification
 
@@ -233,7 +233,7 @@ That scenario pauses a run at Human Review, closes and recreates the workflow on
 
 ## Deliberate limits
 
-- fixed historical Apple filings; no crawler or real-time monitor;
+- packaged historical Apple filings plus manual HTML/TXT import; no automatic SEC monitor yet;
 - Qdrant currently runs in-process; SQLite persists workflow and thesis state;
 - no portfolio management, valuation, Multi-Agent roles, scheduler, or distributed queue;
 - the five-query eval is intentionally small; no measured cost, throughput, p50, p95, or production-readiness claim.

@@ -1,4 +1,6 @@
 import asyncio
+import hashlib
+import json
 from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 from time import perf_counter
@@ -11,12 +13,13 @@ from langgraph.types import Command, interrupt
 
 from agentic_thesis.models import (
     DisclosureChunk,
+    DisclosureDocument,
     ResearchState,
     ReviewDecision,
     ThesisDelta,
     ThesisSnapshot,
 )
-from agentic_thesis.rag import RetrievalHit, build_evidence_pack, enforce_citations
+from agentic_thesis.rag import HybridRetriever, RetrievalHit, build_evidence_pack, enforce_citations
 
 
 class AgenticThesisWorkflow:
@@ -70,6 +73,33 @@ class AgenticThesisWorkflow:
                 snapshot_json TEXT NOT NULL,
                 PRIMARY KEY (thesis_id, version)
             );
+            CREATE TABLE IF NOT EXISTS runs (
+                run_id TEXT PRIMARY KEY,
+                thesis_id TEXT NOT NULL,
+                base_thesis_version INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS run_events (
+                run_id TEXT NOT NULL,
+                sequence INTEGER NOT NULL,
+                event_json TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (run_id, sequence)
+            );
+            CREATE TABLE IF NOT EXISTS disclosures (
+                document_id TEXT PRIMARY KEY,
+                thesis_id TEXT NOT NULL,
+                accession TEXT NOT NULL,
+                filing_date TEXT NOT NULL,
+                source_url TEXT NOT NULL,
+                content_hash TEXT NOT NULL,
+                raw_text TEXT NOT NULL,
+                chunks_json TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (thesis_id, content_hash)
+            );
             """
         )
         await connection.commit()
@@ -77,8 +107,18 @@ class AgenticThesisWorkflow:
 
     async def _retrieve_claims(self, state: ResearchState) -> dict[str, Any]:
         started = perf_counter()
+        retriever = self.retriever
+        if isinstance(retriever, HybridRetriever) and [
+            chunk.chunk_id for chunk in retriever.chunks
+        ] != [chunk.chunk_id for chunk in state.chunks]:
+            retriever = HybridRetriever(
+                state.chunks,
+                embed=retriever.embed,
+                rerank=retriever.rerank,
+            )
+            await retriever.index()
         results = await asyncio.gather(
-            *[self._search(claim.statement) for claim in state.thesis.claims]
+            *[self._search(retriever, claim.statement) for claim in state.thesis.claims]
         )
         return {
             "retrieved": {
@@ -98,10 +138,11 @@ class AgenticThesisWorkflow:
 
     async def _search(
         self,
+        retriever: Any,
         query: str,
     ) -> tuple[list[RetrievalHit], dict[str, float]]:
         async with self.model_calls, asyncio.timeout(45):
-            return await self.retriever.search_with_timings(query, limit=6)
+            return await retriever.search_with_timings(query, limit=6)
 
     async def _build_evidence_packs(self, state: ResearchState) -> dict[str, Any]:
         started = perf_counter()
@@ -265,6 +306,14 @@ class AgenticThesisWorkflow:
         ):
             yield update
 
+    async def stream_resume(self, run_id: str) -> AsyncIterator[dict[str, Any]]:
+        async for update in self.graph.astream(
+            None,
+            {"configurable": {"thread_id": run_id}},
+            stream_mode="updates",
+        ):
+            yield update
+
     async def _initialize(
         self,
         run_id: str,
@@ -279,8 +328,176 @@ class AgenticThesisWorkflow:
             "INSERT OR IGNORE INTO thesis_snapshots VALUES (?, ?, ?)",
             (thesis.thesis_id, thesis.version, thesis.model_dump_json()),
         )
+        await self.connection.execute(
+            """
+            INSERT OR IGNORE INTO runs
+                (run_id, thesis_id, base_thesis_version, status)
+            VALUES (?, ?, ?, 'running')
+            """,
+            (run_id, thesis.thesis_id, thesis.version),
+        )
         await self.connection.commit()
         return ResearchState(run_id=run_id, thesis=thesis, chunks=chunks)
+
+    async def register_run(self, run_id: str, thesis: ThesisSnapshot) -> bool:
+        cursor = await self.connection.execute(
+            """
+            INSERT OR IGNORE INTO runs
+                (run_id, thesis_id, base_thesis_version, status)
+            VALUES (?, ?, ?, 'running')
+            """,
+            (run_id, thesis.thesis_id, thesis.version),
+        )
+        await self.connection.commit()
+        return cursor.rowcount == 1
+
+    async def append_event(self, run_id: str, event: dict[str, Any]) -> int:
+        cursor = await self.connection.execute(
+            "SELECT COALESCE(MAX(sequence), 0) + 1 FROM run_events WHERE run_id = ?",
+            (run_id,),
+        )
+        sequence = int((await cursor.fetchone())[0])
+        await self.connection.execute(
+            "INSERT INTO run_events (run_id, sequence, event_json) VALUES (?, ?, ?)",
+            (run_id, sequence, json.dumps(event)),
+        )
+        await self.connection.execute(
+            "UPDATE runs SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE run_id = ?",
+            (event.get("status", "running"), run_id),
+        )
+        await self.connection.commit()
+        return sequence
+
+    async def list_events(self, run_id: str, after: int = 0) -> list[tuple[int, dict]]:
+        cursor = await self.connection.execute(
+            """
+            SELECT sequence, event_json
+            FROM run_events
+            WHERE run_id = ? AND sequence > ?
+            ORDER BY sequence
+            """,
+            (run_id, after),
+        )
+        return [(row[0], json.loads(row[1])) for row in await cursor.fetchall()]
+
+    async def get_run(self, run_id: str) -> dict[str, Any] | None:
+        cursor = await self.connection.execute(
+            """
+            SELECT run_id, thesis_id, base_thesis_version, status
+            FROM runs WHERE run_id = ?
+            """,
+            (run_id,),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return None
+        return dict(zip(("run_id", "thesis_id", "base_thesis_version", "status"), row))
+
+    async def list_runs(self, thesis_id: str | None = None) -> list[dict[str, Any]]:
+        query = """
+            SELECT run_id, thesis_id, base_thesis_version, status
+            FROM runs
+        """
+        params: tuple[str, ...] = ()
+        if thesis_id is not None:
+            query += " WHERE thesis_id = ?"
+            params = (thesis_id,)
+        query += " ORDER BY updated_at DESC, run_id"
+        cursor = await self.connection.execute(query, params)
+        keys = ("run_id", "thesis_id", "base_thesis_version", "status")
+        return [dict(zip(keys, row)) for row in await cursor.fetchall()]
+
+    async def create_thesis(self, thesis: ThesisSnapshot) -> bool:
+        cursor = await self.connection.execute(
+            "INSERT OR IGNORE INTO thesis_heads VALUES (?, ?)",
+            (thesis.thesis_id, thesis.version),
+        )
+        if cursor.rowcount != 1:
+            await self.connection.rollback()
+            return False
+        await self.connection.execute(
+            "INSERT INTO thesis_snapshots VALUES (?, ?, ?)",
+            (thesis.thesis_id, thesis.version, thesis.model_dump_json()),
+        )
+        await self.connection.commit()
+        return True
+
+    async def get_thesis(self, thesis_id: str) -> ThesisSnapshot | None:
+        cursor = await self.connection.execute(
+            """
+            SELECT snapshots.snapshot_json
+            FROM thesis_heads AS heads
+            JOIN thesis_snapshots AS snapshots
+              ON snapshots.thesis_id = heads.thesis_id
+             AND snapshots.version = heads.version
+            WHERE heads.thesis_id = ?
+            """,
+            (thesis_id,),
+        )
+        row = await cursor.fetchone()
+        return ThesisSnapshot.model_validate_json(row[0]) if row else None
+
+    async def list_theses(self) -> list[ThesisSnapshot]:
+        cursor = await self.connection.execute(
+            """
+            SELECT snapshots.snapshot_json
+            FROM thesis_heads AS heads
+            JOIN thesis_snapshots AS snapshots
+              ON snapshots.thesis_id = heads.thesis_id
+             AND snapshots.version = heads.version
+            ORDER BY snapshots.thesis_id
+            """
+        )
+        return [ThesisSnapshot.model_validate_json(row[0]) for row in await cursor.fetchall()]
+
+    async def add_disclosure(
+        self,
+        document: DisclosureDocument,
+        chunks: list[DisclosureChunk],
+    ) -> bool:
+        content_hash = hashlib.sha256(document.content.encode()).hexdigest()
+        cursor = await self.connection.execute(
+            """
+            INSERT OR IGNORE INTO disclosures
+                (document_id, thesis_id, accession, filing_date, source_url,
+                 content_hash, raw_text, chunks_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                document.document_id,
+                document.thesis_id,
+                document.accession,
+                document.filing_date,
+                document.source_url,
+                content_hash,
+                document.content,
+                json.dumps([chunk.model_dump(mode="json") for chunk in chunks]),
+            ),
+        )
+        await self.connection.commit()
+        return cursor.rowcount == 1
+
+    async def list_disclosures(self, thesis_id: str) -> list[dict[str, Any]]:
+        cursor = await self.connection.execute(
+            """
+            SELECT document_id, thesis_id, accession, filing_date, source_url
+            FROM disclosures WHERE thesis_id = ? ORDER BY filing_date DESC, document_id
+            """,
+            (thesis_id,),
+        )
+        keys = ("document_id", "thesis_id", "accession", "filing_date", "source_url")
+        return [dict(zip(keys, row)) for row in await cursor.fetchall()]
+
+    async def chunks_for_thesis(self, thesis_id: str) -> list[DisclosureChunk]:
+        cursor = await self.connection.execute(
+            "SELECT chunks_json FROM disclosures WHERE thesis_id = ? ORDER BY filing_date, document_id",
+            (thesis_id,),
+        )
+        return [
+            DisclosureChunk.model_validate(chunk)
+            for row in await cursor.fetchall()
+            for chunk in json.loads(row[0])
+        ]
 
     async def resume(self, run_id: str, decision: ReviewDecision) -> dict[str, Any]:
         config = {"configurable": {"thread_id": run_id}}

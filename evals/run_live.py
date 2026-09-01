@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 from datetime import UTC, datetime
+from importlib.resources import files
 from pathlib import Path
 from time import perf_counter
 
@@ -58,7 +59,9 @@ async def main() -> None:
         chunk
         for accession, filing_date, filename, source_url in filings
         for chunk in chunk_filing(
-            (ROOT / "data/filings" / filename).read_text(errors="ignore"),
+            files("agentic_thesis")
+            .joinpath("sample_data", "filings", filename)
+            .read_text(errors="ignore"),
             accession=accession,
             filing_date=filing_date,
             source_url=source_url,
@@ -100,7 +103,9 @@ async def main() -> None:
         )
         retained += f'e:{case["gold_chunk_id"]}' in pack.retained_evidence_ids
 
-    thesis = ThesisSnapshot.model_validate_json((ROOT / "data/thesis_v1.json").read_text())
+    thesis = ThesisSnapshot.model_validate_json(
+        files("agentic_thesis").joinpath("sample_data", "thesis_v1.json").read_text()
+    )
     claim_hits = await asyncio.gather(
         *[
             retriever.search(claim.statement, mode="rerank", limit=6)

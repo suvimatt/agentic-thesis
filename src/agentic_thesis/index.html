@@ -21,6 +21,12 @@
     button.danger { background:var(--bad); }
     button:disabled { opacity:.5; cursor:wait; }
     button:focus-visible,a:focus-visible { outline:3px solid #8bc5a3; outline-offset:2px; }
+    input,select,textarea { width:100%; border:1px solid var(--line); border-radius:9px; padding:10px 12px; background:white; color:var(--ink); font:inherit; }
+    textarea { min-height:140px; font-family:ui-monospace,SFMono-Regular,monospace; font-size:12px; }
+    label { display:grid; gap:5px; color:var(--muted); font-size:13px; }
+    form { display:grid; gap:12px; }
+    details { border-top:1px solid var(--line); padding-top:14px; margin-top:14px; }
+    summary { cursor:pointer; font-weight:700; }
     .grid { display:grid; grid-template-columns:minmax(0,1.35fr) minmax(290px,.65fr); gap:18px; }
     .card { background:var(--card); border:1px solid var(--line); border-radius:16px; padding:22px; box-shadow:0 8px 30px rgba(22,40,27,.04); }
     .span { grid-column:1/-1; }
@@ -52,7 +58,7 @@
       <h1>Monitor a thesis,<br>not a news feed.</h1>
       <p class="lede">See how a new company disclosure supports, weakens, or possibly invalidates each versioned investment claim.</p>
     </div>
-    <button id="start">Analyze Apple 2024 10-K</button>
+    <div><label for="thesis">Current thesis</label><select id="thesis"></select><button id="start">Analyze saved disclosures</button></div>
   </header>
 
   <div class="grid">
@@ -76,6 +82,33 @@
     </section>
 
     <section class="card span">
+      <div class="row between"><h2>Recent runs</h2><span class="muted">Saved across restarts</span></div>
+      <div id="runs" class="empty">No saved runs yet.</div>
+    </section>
+
+    <section class="card span">
+      <div class="row between"><h2>Theses and disclosures</h2><span class="muted">Saved locally</span></div>
+      <div id="disclosures" class="empty">Choose a thesis to see its disclosures.</div>
+      <details>
+        <summary>Add a thesis</summary>
+        <form id="thesis-form">
+          <label>Thesis JSON<textarea id="thesis-json" required placeholder='{"thesis_id":"my-thesis","company":"Example Inc.","version":1,"claims":[{"claim_id":"growth","statement":"Growth remains durable.","rationale":"Recurring demand.","falsifiers":["Revenue declines"],"evidence_refs":[]}]}'></textarea></label>
+          <button type="submit">Save thesis</button>
+        </form>
+      </details>
+      <details>
+        <summary>Add disclosure</summary>
+        <form id="disclosure-form">
+          <label>HTML or text file<input id="disclosure-file" type="file" accept=".html,.htm,.txt,text/html,text/plain" required></label>
+          <label>Accession or source ID<input id="accession" required></label>
+          <label>Filing date<input id="filing-date" type="date" required></label>
+          <label>Source URL<input id="source-url" type="url"></label>
+          <button type="submit">Save disclosure</button>
+        </form>
+      </details>
+    </section>
+
+    <section class="card span">
       <h2>Evidence packs</h2>
       <div id="evidence" class="empty">Citations and compression records will appear here.</div>
     </section>
@@ -84,6 +117,7 @@
 <script>
   const $ = id => document.getElementById(id);
   let runId;
+  let eventSource;
 
   function escapeHtml(value) {
     const element = document.createElement('div');
@@ -104,9 +138,11 @@
   function addStep(event) {
     const item = document.createElement('li');
     item.className = 'done';
-    const compression = event.claims
-      ? event.claims.map(c => `${c.tokens_before}→${c.tokens_after} tokens`).join(', ')
-      : event.latency_ms != null ? `${event.latency_ms} ms` : '';
+    const compression = event.claims?.some(claim => claim.tokens_before != null)
+      ? event.claims.map(claim => `${claim.tokens_before}→${claim.tokens_after} tokens`).join(', ')
+      : event.claims?.some(claim => claim.retrieval_ms != null)
+        ? event.claims.map(claim => `${claim.retrieval_ms}+${claim.rerank_ms} ms`).join(', ')
+        : event.latency_ms != null ? `${event.latency_ms} ms` : '';
     item.innerHTML = `<span class="dot"></span><span>${escapeHtml(event.node)}</span><code>${escapeHtml(compression)}</code>`;
     $('steps').append(item);
   }
@@ -141,32 +177,104 @@
     return state;
   }
 
+  async function loadRuns() {
+    const runs = await readResponse(await fetch('/runs'));
+    if (!runs.length) {
+      $('runs').className = 'empty';
+      $('runs').textContent = 'No saved runs yet.';
+      return;
+    }
+    $('runs').className = '';
+    $('runs').innerHTML = runs.map(run =>
+      `<article class="claim row between"><div><strong>${escapeHtml(run.thesis_id)}</strong><div class="muted">${escapeHtml(run.run_id)} · Thesis v${run.base_thesis_version}</div></div><div class="row"><span class="badge ${run.status}">${escapeHtml(run.status)}</span><button class="secondary" data-run-id="${escapeHtml(run.run_id)}">Open</button></div></article>`
+    ).join('');
+    document.querySelectorAll('[data-run-id]').forEach(button =>
+      button.addEventListener('click', () => openRun(button.dataset.runId))
+    );
+    const pending = runs.find(run => run.status === 'awaiting_review');
+    if (!runId && pending) await openRun(pending.run_id);
+  }
+
+  async function loadDisclosures() {
+    const thesisId = $('thesis').value;
+    if (!thesisId) return;
+    const disclosures = await readResponse(
+      await fetch(`/disclosures?thesis_id=${encodeURIComponent(thesisId)}`)
+    );
+    $('disclosures').className = disclosures.length ? '' : 'empty';
+    $('disclosures').innerHTML = disclosures.length
+      ? disclosures.map(item => `<article class="claim"><div class="row between"><strong>${escapeHtml(item.accession)}</strong><span class="muted">${escapeHtml(item.filing_date)}</span></div><div class="muted">${escapeHtml(item.document_id)}</div></article>`).join('')
+      : 'No disclosures saved for this thesis.';
+  }
+
+  async function loadTheses(preferredId) {
+    const theses = await readResponse(await fetch('/theses'));
+    $('thesis').innerHTML = theses.map(item =>
+      `<option value="${escapeHtml(item.thesis_id)}">${escapeHtml(item.company)} · v${item.version}</option>`
+    ).join('');
+    if (preferredId && theses.some(item => item.thesis_id === preferredId)) {
+      $('thesis').value = preferredId;
+    }
+    $('start').disabled = !theses.length;
+    if (theses.length) await loadDisclosures();
+  }
+
+  function connectEvents() {
+    if (eventSource) eventSource.close();
+    eventSource = new EventSource(`/runs/${runId}/events`);
+    eventSource.addEventListener('state', async message => {
+      const event = JSON.parse(message.data);
+      addStep(event);
+      setStatus(event.status);
+      if (event.status === 'awaiting_review') {
+        eventSource.close();
+        await loadState();
+        setReviewPending(false);
+        $('review').style.display = 'block';
+        await loadRuns();
+      } else if (['committed', 'rejected', 'failed', 'version_conflict'].includes(event.status)) {
+        eventSource.close();
+        if (event.status === 'failed') showError(event.error || 'Run failed');
+        $('start').disabled = false;
+        await loadRuns();
+      }
+    });
+    eventSource.onerror = () => {
+      setStatus('reconnecting');
+      showError('Connection interrupted. Reconnecting to the saved run…');
+    };
+  }
+
+  async function openRun(id) {
+    runId = id;
+    $('steps').innerHTML = '';
+    $('error').style.display = 'none';
+    $('review').style.display = 'none';
+    const state = await loadState();
+    if (state.thesis?.thesis_id) {
+      $('thesis').value = state.thesis.thesis_id;
+      await loadDisclosures();
+    }
+    setStatus(state.status);
+    if (state.status === 'awaiting_review') {
+      setReviewPending(false);
+      $('review').style.display = 'block';
+    }
+    if (state.status === 'running' || state.status === 'awaiting_review') connectEvents();
+  }
+
   async function start() {
     $('start').disabled = true;
     $('steps').innerHTML = '';
     $('error').style.display = 'none';
     $('review').style.display = 'none';
     setStatus('running');
-    runId = `aapl-2024-${Date.now()}`;
+    const thesisId = $('thesis').value;
+    if (!thesisId) return showError('Create a thesis first.');
+    runId = `${thesisId}-${crypto.randomUUID()}`;
     try {
-      await readResponse(await fetch('/runs', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({run_id:runId})}));
-      const events = new EventSource(`/runs/${runId}/events`);
-      events.addEventListener('state', async message => {
-        const event = JSON.parse(message.data);
-        addStep(event);
-        setStatus(event.status);
-        if (event.status === 'awaiting_review') {
-          events.close();
-          await loadState();
-          setReviewPending(false);
-          $('review').style.display = 'block';
-        } else if (event.status === 'failed') {
-          events.close();
-          showError(event.error || 'Run failed');
-          $('start').disabled = false;
-        }
-      });
-      events.onerror = () => { events.close(); showError('Event stream disconnected.'); $('start').disabled = false; };
+      await readResponse(await fetch('/runs', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({run_id:runId, thesis_id:thesisId})}));
+      connectEvents();
     } catch (error) {
       setStatus('failed');
       showError(error.message);
@@ -184,6 +292,7 @@
       $('review').style.display = 'none';
       $('start').disabled = false;
       if (state.status === 'committed') await loadState();
+      await loadRuns();
     } catch (error) {
       if (error.status === 409) {
         setStatus('needs_refresh');
@@ -201,8 +310,46 @@
   }
 
   $('start').addEventListener('click', start);
+  $('thesis').addEventListener('change', loadDisclosures);
   $('approve').addEventListener('click', () => review('approve'));
   $('reject').addEventListener('click', () => review('reject'));
+  $('thesis-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    try {
+      const thesis = JSON.parse($('thesis-json').value);
+      await readResponse(await fetch('/theses', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify(thesis)}));
+      await loadTheses(thesis.thesis_id);
+      $('thesis-json').value = '';
+    } catch (error) {
+      showError(error.message);
+    }
+  });
+  $('disclosure-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    try {
+      const thesisId = $('thesis').value;
+      const file = $('disclosure-file').files[0];
+      if (!thesisId || !file) throw new Error('Choose a thesis and file first.');
+      const accession = $('accession').value.trim();
+      await readResponse(await fetch('/disclosures', {
+        method:'POST',
+        headers:{'content-type':'application/json'},
+        body:JSON.stringify({
+          document_id:`${thesisId}:${accession}`,
+          thesis_id:thesisId,
+          accession,
+          filing_date:$('filing-date').value,
+          source_url:$('source-url').value.trim(),
+          content:await file.text()
+        })
+      }));
+      event.target.reset();
+      await loadDisclosures();
+    } catch (error) {
+      showError(error.message);
+    }
+  });
+  Promise.all([loadTheses(), loadRuns()]).catch(error => showError(error.message));
 </script>
 </body>
 </html>

@@ -42,24 +42,16 @@ AgenticThesis 判断一家公司的新披露如何支持、削弱或可能推翻
 
 ## 🚀 快速开始
 
-### 1. 安装
+### 1. 配置模型端点
 
-需要 Python 3.11 或更高版本。
-
-```bash
-git clone https://github.com/suvimatt/agentic-thesis.git
-cd agentic-thesis
-python3 -m venv .venv
-.venv/bin/python -m pip install -e '.[test]'
-```
-
-### 2. 配置模型端点
+创建 `~/.agentic-thesis/.env`，也可以使用当前目录下的 `.env`：
 
 ```bash
-cp .env.example .env
+mkdir -p ~/.agentic-thesis
+$EDITOR ~/.agentic-thesis/.env
 ```
 
-在 `.env` 中填写以下配置：
+填写以下配置：
 
 | 变量 | 用途 |
 | --- | --- |
@@ -70,17 +62,21 @@ cp .env.example .env
 | `EMBEDDING_BASE_URL` | OpenAI 兼容的 Embedding 端点 |
 | `AGENTIC_THESIS_EMBEDDING_MODEL` | Embedding 模型名称 |
 
-### 3. 启动应用
+### 2. 启动应用
 
 ```bash
-.venv/bin/uvicorn agentic_thesis.api:app --env-file .env --port 8000
+uvx --from git+https://github.com/suvimatt/agentic-thesis agentic-thesis serve
 ```
 
-打开 [http://127.0.0.1:8000](http://127.0.0.1:8000)。应用启动时会索引仓库内两份 Apple 历史 Filing，随后可以在产品页面完成 Filing 检索、证据比较和 Human Review。
+打开 [http://127.0.0.1:8000](http://127.0.0.1:8000)。首次启动会 seed 安装包内的 Apple thesis 和 filings。Thesis、手工导入的 disclosure、历史 runs、events、checkpoints 和已批准版本都会保存在 `~/.agentic-thesis/`，服务重启后继续使用。
 
-### 4. 验证确定性路径
+开发和确定性验证：
 
 ```bash
+git clone https://github.com/suvimatt/agentic-thesis.git
+cd agentic-thesis
+python3 -m venv .venv
+.venv/bin/python -m pip install -e '.[test]'
 .venv/bin/pytest -q -p no:cacheprovider
 ```
 
@@ -136,12 +132,12 @@ ThesisSnapshot v1
 
 | 边界 | 职责 | 实现 |
 | --- | --- | --- |
-| 接口 | 异步启动任务、流式返回进度、暴露状态并接受审核决定 | FastAPI、后台 `asyncio` task、SSE、四个 endpoint |
+| 接口 | 管理 theses 和 disclosures、异步启动任务、重放进度并接受审核决定 | FastAPI、后台 `asyncio` tasks、durable SSE |
 | 检索 | 在 Filing 语料中找到与 claim 相关的段落 | 确定性固定长度切块及 section 标签、BM25、进程内 Qdrant vector、RRF、API rerank |
 | Working Context | 为每条 claim 提供最小、充分、可定位来源的证据 | query-conditioned extractive `EvidencePack`、每条 claim 固定 2,000-token 预算、evidence ID 和原文偏移 |
 | 语义分析 | 只根据提供的证据比较每条 Thesis claim | API Structured Outputs → 类型化 `ThesisDelta` |
 | 完整性门禁 | 阻止无依据结论和不安全状态变更 | quote/source 校验、falsifier 校验、exact-claim 校验、Human Review |
-| 持久状态 | 恢复暂停的任务并保存权威 Thesis 历史 | LangGraph SQLite checkpoint、不可变 `ThesisSnapshot`、thesis head |
+| 持久状态 | 恢复运行中或暂停的任务并保存权威 Thesis 历史 | LangGraph SQLite checkpoint、durable run events、不可变 `ThesisSnapshot`、thesis head |
 | 提交 | 只有 base version 仍为当前版本时才能应用已批准的 delta | SQLite compare-and-swap → `vN+1` 或 `version_conflict` |
 
 两份仓库内 SEC Filing 经确定性 HTML 提取后共有 97,675 个 `cl100k_base` token。模型调用不会接收完整 Filing，而只接收逐条 claim 构建、带引用的 `EvidencePack`。这使 **Context**（当前调用的临时工作证据）、**Memory**（版本化 Thesis）和 **Workflow State**（可恢复执行状态）彼此分离。
@@ -157,8 +153,11 @@ ThesisSnapshot v1
 - quote-to-source 引用校验；无依据输出会降级为 `unknown`；
 - 六节点 LangGraph、Human Review interrupt 和 SQLite checkpoint/resume；
 - 不可变 Thesis snapshot 和 compare-and-swap 冲突保护；
-- 异步 FastAPI、后台任务、有界且带 timeout 的模型调用、cancellation-safe shutdown，以及不暴露 chain-of-thought 的实时 LangGraph SSE 事件；
-- 无前端依赖的产品页面，展示进度、claim delta、引用、Context 压缩和 Human Review。
+- 可持久化的 run history，以及通过 `Last-Event-ID` 跨浏览器或服务重启重放的顺序化 SSE；
+- 多个相互隔离的 theses，以及手工 HTML/TXT disclosure 导入；
+- 异步 FastAPI、后台任务、有界且带 timeout 的模型调用、停止服务后的 checkpoint 恢复，以及不暴露 chain-of-thought 的实时 LangGraph events；
+- 无前端依赖的产品页面，支持 thesis/disclosure 管理、进度、引用、Context 压缩和 Human Review；
+- 可安装的 `agentic-thesis serve` CLI、package sample data 和稳定的用户数据目录。
 
 ## 验证结果
 
@@ -166,7 +165,8 @@ ThesisSnapshot v1
 
 | 检查项 | 观测结果 |
 | --- | ---: |
-| 测试 | 9 passed |
+| 测试 | 12 passed |
+| 全新环境 wheel 安装 | 在仓库外验证通过 |
 | 2023 提取 tokens / chunks | 48,923 / 109 |
 | 2024 提取 tokens / chunks | 48,752 / 110 |
 | BM25 Recall@5 | 1.00 |
@@ -209,7 +209,7 @@ Recall 使用 `evals/gold.json` 中的五个案例。确定性的 vector 和 rer
 ```bash
 curl -X POST http://localhost:8000/runs \
   -H 'content-type: application/json' \
-  -d '{"run_id":"aapl-2024-review"}'
+  -d '{"run_id":"aapl-2024-review","thesis_id":"aapl-primary"}'
 
 curl -N http://localhost:8000/runs/aapl-2024-review/events
 
@@ -218,7 +218,7 @@ curl -X POST http://localhost:8000/runs/aapl-2024-review/review \
   -d '{"action":"approve"}'
 ```
 
-其他 endpoint 包括 `GET /runs/{run_id}` 和自动生成的 `/docs` OpenAPI 页面。
+浏览器还可以创建和列出 theses、导入和列出 disclosures、查看历史 runs，并重新打开待审核任务。自动生成的 `/docs` 页面记录同一套 HTTP API。
 
 ## 90 秒验证
 
@@ -233,7 +233,7 @@ curl -X POST http://localhost:8000/runs/aapl-2024-review/review \
 
 ## 明确边界
 
-- 只使用固定的 Apple 历史 Filing；没有 crawler 或实时监控；
+- 包含 Apple 历史 Filing 样例并支持手工 HTML/TXT 导入；尚无自动 SEC monitoring；
 - Qdrant 当前运行在进程内；SQLite 持久化 Workflow 和 Thesis 状态；
 - 没有 portfolio management、valuation、Multi-Agent role、scheduler 或 distributed queue；
 - 五条 query 的 eval 有意保持很小；不声称已有成本、throughput、p50、p95 或 production-readiness 数据。

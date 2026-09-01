@@ -1,5 +1,9 @@
 import asyncio
 import json
+import os
+import subprocess
+import sys
+from importlib.resources import files
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -28,6 +32,52 @@ from agentic_thesis.rag import (
 from agentic_thesis.workflow import AgenticThesisWorkflow
 
 
+def test_installed_cli_fails_fast_with_all_missing_credentials(tmp_path: Path) -> None:
+    package_data = files("agentic_thesis").joinpath("sample_data")
+    assert package_data.joinpath("thesis_v1.json").is_file()
+    assert package_data.joinpath("filings/aapl-2023-10-k.html").is_file()
+    assert package_data.joinpath("filings/aapl-2024-10-k.html").is_file()
+
+    root = Path(__file__).parents[1]
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key
+        not in {
+            "OPENAI_API_KEY",
+            "EMBEDDING_API_KEY",
+            "EMBEDDING_BASE_URL",
+            "AGENTIC_THESIS_EMBEDDING_MODEL",
+        }
+    }
+    env["PYTHONPATH"] = str(root / "src")
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "agentic_thesis.cli",
+            "serve",
+            "--data-dir",
+            str(tmp_path / "state"),
+        ],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 2
+    assert result.stdout == ""
+    for variable in (
+        "OPENAI_API_KEY",
+        "EMBEDDING_API_KEY",
+        "EMBEDDING_BASE_URL",
+        "AGENTIC_THESIS_EMBEDDING_MODEL",
+    ):
+        assert variable in result.stderr
+
+
 def test_chunk_ids_are_stable() -> None:
     html = "<html><body><h2>Item 1. Business</h2><p>Alpha beta gamma.</p></body></html>"
 
@@ -42,9 +92,9 @@ def test_chunk_ids_are_stable() -> None:
 
 
 def test_fixed_sec_filings_exist() -> None:
-    root = Path(__file__).parents[1]
-    assert (root / "data/filings/aapl-2023-10-k.html").stat().st_size > 1_000_000
-    assert (root / "data/filings/aapl-2024-10-k.html").stat().st_size > 1_000_000
+    filings = files("agentic_thesis").joinpath("sample_data", "filings")
+    assert len(filings.joinpath("aapl-2023-10-k.html").read_bytes()) > 1_000_000
+    assert len(filings.joinpath("aapl-2024-10-k.html").read_bytes()) > 1_000_000
 
 
 def test_gold_rank_reports_one_based_position_or_missing() -> None:
@@ -54,7 +104,9 @@ def test_gold_rank_reports_one_based_position_or_missing() -> None:
 
 async def test_hybrid_retrieval_reports_measured_recall_at_5() -> None:
     root = Path(__file__).parents[1]
-    filing = (root / "data/filings/aapl-2024-10-k.html").read_text(errors="ignore")
+    filing = files("agentic_thesis").joinpath(
+        "sample_data", "filings", "aapl-2024-10-k.html"
+    ).read_text(errors="ignore")
     chunks = chunk_filing(filing, accession="aapl-2024", filing_date="2024-09-28")
     cases = json.loads((root / "evals/gold.json").read_text())
     gold = {case["query"]: case["gold_chunk_id"] for case in cases}
@@ -297,6 +349,38 @@ async def test_app_shutdown_waits_for_inflight_run_cancellation(tmp_path: Path) 
     assert app.state.run_tasks["shutdown-run"].done()
     await workflow.close()
 
+    class ResumedRetriever:
+        async def search_with_timings(self, query: str, *, limit: int):
+            return [RetrievalHit(chunks[0], 1.0)], {"retrieval_ms": 1.0, "rerank_ms": 1.0}
+
+    async def resumed_analyze(snapshot: ThesisSnapshot, packs: list) -> ThesisDelta:
+        return ThesisDelta(
+            base_thesis_version=snapshot.version,
+            claim_deltas=[
+                ClaimDelta(
+                    claim_id="services-margin",
+                    status=DeltaStatus.SUPPORTED,
+                    explanation="Services margin remains high.",
+                    evidence_ids=[packs[0].items[0].evidence_id],
+                )
+            ],
+        )
+
+    restarted = await AgenticThesisWorkflow.create(
+        tmp_path / "shutdown.sqlite",
+        ResumedRetriever(),
+        resumed_analyze,
+    )
+    restarted_app = create_app(restarted)
+    async with restarted_app.router.lifespan_context(restarted_app):
+        async with AsyncClient(
+            transport=ASGITransport(app=restarted_app), base_url="http://test"
+        ) as client:
+            async with asyncio.timeout(2):
+                events = await client.get("/runs/shutdown-run/events")
+            assert '"status": "awaiting_review"' in events.text
+    await restarted.close()
+
 
 async def test_langgraph_resumes_after_restart_and_rejects_stale_commit(tmp_path: Path) -> None:
     thesis = ThesisSnapshot(
@@ -383,6 +467,10 @@ async def test_langgraph_resumes_after_restart_and_rejects_stale_commit(tmp_path
         assert page.headers["content-type"].startswith("text/html")
         assert "Monitor a thesis" in page.text
         assert "Review thesis changes" in page.text
+        assert "Recent runs" in page.text
+        assert 'id="runs"' in page.text
+        assert "Add a thesis" in page.text
+        assert "Add disclosure" in page.text
         assert "Keep current thesis" in page.text
         assert "Apply changes" in page.text
         assert "A stale base version returns HTTP 409" not in page.text
@@ -444,6 +532,10 @@ async def test_langgraph_resumes_after_restart_and_rejects_stale_commit(tmp_path
             json={"action": "approve"},
         )
         assert conflict_response.status_code == 409
+        conflict_history = await client.get("/runs", params={"thesis_id": "aapl-api"})
+        assert next(
+            run for run in conflict_history.json() if run["run_id"] == "api-conflict"
+        )["status"] == "version_conflict"
 
         error_thesis = thesis.model_copy(update={"thesis_id": "aapl-error"})
         error_started = await client.post(
@@ -462,3 +554,207 @@ async def test_langgraph_resumes_after_restart_and_rejects_stale_commit(tmp_path
         assert error_state["status"] == "failed"
         assert error_state["error"] == "model timed out"
     await restarted_again.close()
+
+
+async def test_run_history_and_sse_replay_survive_restart(tmp_path: Path) -> None:
+    thesis = ThesisSnapshot(
+        thesis_id="history-thesis",
+        company="Apple Inc.",
+        version=1,
+        claims=[
+            ThesisClaim(
+                claim_id="services-margin",
+                statement="Services mix supports margins.",
+                rationale="Services has higher margins.",
+            )
+        ],
+    )
+    chunk = DisclosureChunk(
+        chunk_id="history-evidence",
+        accession="history",
+        filing_date="2024-09-28",
+        section="Gross Margin",
+        text="Services gross margin was 73.9 percent.",
+        start_char=0,
+        end_char=40,
+    )
+
+    class FakeRetriever:
+        async def search_with_timings(self, query: str, *, limit: int):
+            return [RetrievalHit(chunk, 1.0)], {"retrieval_ms": 1.0, "rerank_ms": 1.0}
+
+    async def analyze(snapshot: ThesisSnapshot, packs: list) -> ThesisDelta:
+        return ThesisDelta(
+            base_thesis_version=snapshot.version,
+            claim_deltas=[
+                ClaimDelta(
+                    claim_id="services-margin",
+                    status=DeltaStatus.SUPPORTED,
+                    explanation="Services margin remains high.",
+                    evidence_ids=[packs[0].items[0].evidence_id],
+                )
+            ],
+        )
+
+    database = tmp_path / "history.sqlite"
+    first = await AgenticThesisWorkflow.create(database, FakeRetriever(), analyze)
+    first_app = create_app(first)
+    async with AsyncClient(
+        transport=ASGITransport(app=first_app), base_url="http://test"
+    ) as client:
+        started = await client.post(
+            "/runs",
+            json={
+                "run_id": "history-run",
+                "thesis": thesis.model_dump(mode="json"),
+                "chunks": [chunk.model_dump(mode="json")],
+            },
+        )
+        assert started.status_code == 202
+        events = await client.get("/runs/history-run/events")
+        assert "id: 1" in events.text
+        assert '"status": "awaiting_review"' in events.text
+    await first.close()
+
+    restarted = await AgenticThesisWorkflow.create(database, FakeRetriever(), analyze)
+    restarted_app = create_app(restarted)
+    async with AsyncClient(
+        transport=ASGITransport(app=restarted_app), base_url="http://test"
+    ) as client:
+        history = await client.get("/runs")
+        assert history.status_code == 200
+        assert history.json() == [
+            {
+                "run_id": "history-run",
+                "thesis_id": "history-thesis",
+                "base_thesis_version": 1,
+                "status": "awaiting_review",
+            }
+        ]
+        replayed = await client.get(
+            "/runs/history-run/events",
+            headers={"Last-Event-ID": "2"},
+        )
+        assert "id: 1" not in replayed.text
+        assert "id: 2" not in replayed.text
+        assert "id: 3" in replayed.text
+        assert '"status": "awaiting_review"' in replayed.text
+    await restarted.close()
+
+
+async def test_multiple_theses_use_only_their_own_manual_disclosures(tmp_path: Path) -> None:
+    apple_chunk = DisclosureChunk(
+        chunk_id="bootstrap",
+        accession="bootstrap",
+        filing_date="2024-01-01",
+        section="Unknown",
+        text="Bootstrap corpus.",
+        start_char=0,
+        end_char=17,
+    )
+
+    async def embed(texts: list[str]) -> list[list[float]]:
+        return HybridRetriever.deterministic_embeddings(texts)
+
+    async def rerank(query: str, candidates: list[DisclosureChunk]) -> list[str]:
+        return [chunk.chunk_id for chunk in candidates]
+
+    retriever = HybridRetriever([apple_chunk], embed=embed, rerank=rerank)
+    await retriever.index()
+
+    async def analyze(snapshot: ThesisSnapshot, packs: list) -> ThesisDelta:
+        return ThesisDelta(
+            base_thesis_version=snapshot.version,
+            claim_deltas=[
+                ClaimDelta(
+                    claim_id=snapshot.claims[0].claim_id,
+                    status=DeltaStatus.SUPPORTED,
+                    explanation="The imported disclosure contains relevant evidence.",
+                    evidence_ids=[packs[0].items[0].evidence_id],
+                )
+            ],
+        )
+
+    workflow = await AgenticThesisWorkflow.create(
+        tmp_path / "multiple.sqlite", retriever, analyze
+    )
+    app = create_app(workflow)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        for thesis_id, company, keyword in (
+            ("apple-custom", "Apple Inc.", "wearables"),
+            ("microsoft-custom", "Microsoft Corp.", "cloud"),
+        ):
+            thesis = ThesisSnapshot(
+                thesis_id=thesis_id,
+                company=company,
+                version=1,
+                claims=[
+                    ThesisClaim(
+                        claim_id=f"{keyword}-claim",
+                        statement=f"{keyword.title()} supports durable growth.",
+                        rationale=f"{keyword.title()} is strategically important.",
+                    )
+                ],
+            )
+            created = await client.post("/theses", json=thesis.model_dump(mode="json"))
+            assert created.status_code == 201
+            disclosure = await client.post(
+                "/disclosures",
+                json={
+                    "document_id": f"{thesis_id}-2024",
+                    "thesis_id": thesis_id,
+                    "accession": f"{thesis_id}-accession",
+                    "filing_date": "2024-09-28",
+                    "source_url": f"https://example.com/{thesis_id}",
+                    "content": f"<html><body>{company} reported stronger {keyword} performance.</body></html>",
+                },
+            )
+            assert disclosure.status_code == 201
+
+        theses = await client.get("/theses")
+        assert {item["thesis_id"] for item in theses.json()} == {
+            "apple-custom",
+            "microsoft-custom",
+        }
+
+        missing = await client.post(
+            "/runs", json={"run_id": "missing-run", "thesis_id": "does-not-exist"}
+        )
+        assert missing.status_code == 404
+        no_disclosures = ThesisSnapshot(
+            thesis_id="no-disclosures",
+            company="No Documents Inc.",
+            version=1,
+            claims=[
+                ThesisClaim(
+                    claim_id="empty",
+                    statement="There is evidence.",
+                    rationale="No disclosure has been imported.",
+                )
+            ],
+        )
+        assert (
+            await client.post("/theses", json=no_disclosures.model_dump(mode="json"))
+        ).status_code == 201
+        no_disclosure_run = await client.post(
+            "/runs", json={"run_id": "empty-run", "thesis_id": "no-disclosures"}
+        )
+        assert no_disclosure_run.status_code == 422
+
+        for thesis_id, expected, excluded in (
+            ("apple-custom", "wearables", "cloud"),
+            ("microsoft-custom", "cloud", "wearables"),
+        ):
+            started = await client.post(
+                "/runs",
+                json={"run_id": f"{thesis_id}-run", "thesis_id": thesis_id},
+            )
+            assert started.status_code == 202
+            await client.get(f"/runs/{thesis_id}-run/events")
+            state = (await client.get(f"/runs/{thesis_id}-run")).json()
+            source_text = " ".join(
+                item["quote"] for pack in state["evidence_packs"] for item in pack["items"]
+            ).lower()
+            assert expected in source_text
+            assert excluded not in source_text
+    await workflow.close()

@@ -8,13 +8,20 @@
   <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white" alt="Python 3.11+"></a>
   <a href="https://github.com/langchain-ai/langgraph"><img src="https://img.shields.io/badge/LangGraph-Stateful%20Workflow-1C3C3C" alt="LangGraph"></a>
   <a href="https://fastapi.tiangolo.com/"><img src="https://img.shields.io/badge/FastAPI-Async%20API-009688?logo=fastapi&logoColor=white" alt="FastAPI"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0-blue.svg" alt="GPL-3.0 license"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-AGPL--3.0-blue.svg" alt="AGPL-3.0 license"></a>
   <a href="https://github.com/suvimatt/agentic-thesis/stargazers"><img src="https://img.shields.io/github/stars/suvimatt/agentic-thesis?style=social" alt="GitHub stars"></a>
 </p>
 
-<h2 align="center">Know why you own a company—and notice when the facts change</h2>
+<h2 align="center">Your investment thesis, evidence-guarded and versioned by AI</h2>
 
-Most part-time investors do not need another news feed. They need a reliable way to remember why they invested and to notice when new company facts challenge those reasons.
+AgenticThesis is an open-source, stateful Python engine for monitoring how new company disclosures support, weaken, or invalidate an existing investment thesis. It keeps source-addressable evidence, reviewable changes, version history, and resumable workflow state application-owned.
+
+The same Python distribution provides two entry points:
+
+- `agentic-thesis serve` runs the self-hosted application with SQLite and embedded Qdrant;
+- `AgenticThesisEngine` is the supported interface for Python applications.
+
+For investors, the outcome is simple: remember why you invested and notice when new facts challenge those reasons.
 
 AgenticThesis lets you write down:
 
@@ -43,6 +50,7 @@ Each result links back to the original filing passages. Nothing is added to your
 
 - [A concrete Apple example](#a-concrete-apple-example)
 - [🚀 Quick Start](#-quick-start)
+- [Python Engine Interface](#python-engine-interface)
 - [What AgenticThesis does for you](#what-agenticthesis-does-for-you)
 - [Plain-English terms](#plain-english-terms)
 - [How It Works](#how-it-works)
@@ -104,6 +112,36 @@ python3 -m venv .venv
 ```
 
 The test suite uses deterministic retrieval and model substitutes where appropriate, so the core state guarantees can be verified without calling an external model.
+
+## Python Engine Interface
+
+Install the engine directly from the repository until the first PyPI release:
+
+```bash
+python -m pip install "agentic-thesis @ git+https://github.com/suvimatt/agentic-thesis.git"
+```
+
+`open_local` supplies the default SQLite checkpoint/state adapter and persistent embedded Qdrant index. Callers provide the model functions and use domain models exported from `agentic_thesis`:
+
+```python
+from agentic_thesis import AgenticThesisEngine, ReviewDecision
+
+engine = await AgenticThesisEngine.open_local(
+    "./data",
+    embed=embed,
+    rerank=rerank,
+    analyze=analyze,
+)
+await engine.create_thesis(thesis)
+await engine.add_disclosure(disclosure)
+paused = await engine.run("aapl-2024-review", thesis.thesis_id)
+committed = await engine.review(
+    "aapl-2024-review", ReviewDecision(action="approve")
+)
+await engine.close()
+```
+
+The executable contract is [`tests/test_engine_contract.py`](tests/test_engine_contract.py). FastAPI, the browser application, SSE, and the local scheduler are self-host adapters around the same engine; they are not required by engine callers.
 
 ## What AgenticThesis does for you
 
@@ -275,4 +313,4 @@ That scenario pauses a run at Human Review, closes and recreates the workflow on
 
 ## License
 
-AgenticThesis is licensed under the [GNU General Public License v3.0](LICENSE).
+AgenticThesis is licensed under the [GNU Affero General Public License v3.0](LICENSE).

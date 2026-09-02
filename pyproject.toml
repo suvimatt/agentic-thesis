@@ -4,8 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agentic-thesis"
-version = "0.6.1"
-description = "An evidence-backed thesis monitoring system for long-term individual investors."
+version = "0.7.0"
+description = "An open-source, stateful engine for evidence-backed investment thesis monitoring."
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [{ name = "Matt Su" }]
 requires-python = ">=3.11"
 dependencies = [
   "fastapi>=0.116,<1",
@@ -29,6 +32,11 @@ test = [
 
 [project.scripts]
 agentic-thesis = "agentic_thesis.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/suvimatt/agentic-thesis"
+Repository = "https://github.com/suvimatt/agentic-thesis"
+Issues = "https://github.com/suvimatt/agentic-thesis/issues"
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

@@ -8,13 +8,20 @@
   <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white" alt="Python 3.11+"></a>
   <a href="https://github.com/langchain-ai/langgraph"><img src="https://img.shields.io/badge/LangGraph-Stateful%20Workflow-1C3C3C" alt="LangGraph"></a>
   <a href="https://fastapi.tiangolo.com/"><img src="https://img.shields.io/badge/FastAPI-Async%20API-009688?logo=fastapi&logoColor=white" alt="FastAPI"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0-blue.svg" alt="GPL-3.0 license"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-AGPL--3.0-blue.svg" alt="AGPL-3.0 license"></a>
   <a href="https://github.com/suvimatt/agentic-thesis/stargazers"><img src="https://img.shields.io/github/stars/suvimatt/agentic-thesis?style=social" alt="GitHub stars"></a>
 </p>
 
-<h2 align="center">记住自己为什么买一家公司，也及时看见事实变了</h2>
+<h2 align="center">让 AI 用证据守护并持续版本化你的投资 Thesis</h2>
 
-普通业余投资者往往不缺新闻，缺的是一种可靠的方法：长期记住自己为什么投资，并在公司出现新事实时，检查原来的理由是否还成立。
+AgenticThesis 是一个开源、stateful 的 Python engine，用来判断公司新披露如何支持、削弱或推翻已有投资 Thesis。原始证据、待确认变更、版本历史和可恢复 workflow state 都由应用自己掌握。
+
+同一个 Python distribution 提供两个入口：
+
+- `agentic-thesis serve` 使用 SQLite 和 embedded Qdrant 运行 self-host 应用；
+- `AgenticThesisEngine` 是其他 Python 应用使用的受支持 interface。
+
+对投资者来说，结果仍然很简单：长期记住自己为什么投资，并在公司出现新事实时检查原来的理由是否还成立。
 
 你先在 AgenticThesis 中写下：
 
@@ -43,6 +50,7 @@ AgenticThesis 面向已经有明确投资理由、长期跟踪少量公司的自
 
 - [一个具体的 Apple 例子](#一个具体的-apple-例子)
 - [🚀 快速开始](#-快速开始)
+- [Python Engine Interface](#python-engine-interface)
 - [AgenticThesis 能帮你解决什么](#agenticthesis-能帮你解决什么)
 - [这些术语用普通话怎么理解](#这些术语用普通话怎么理解)
 - [运行流程](#运行流程)
@@ -104,6 +112,36 @@ python3 -m venv .venv
 ```
 
 测试在适当位置使用确定性的检索和模型替代实现，因此不调用外部模型也能验证核心状态保证。
+
+## Python Engine Interface
+
+第一次 PyPI 发布前，先直接从 repository 安装 engine：
+
+```bash
+python -m pip install "agentic-thesis @ git+https://github.com/suvimatt/agentic-thesis.git"
+```
+
+`open_local` 默认提供 SQLite checkpoint/state adapter 和可持久化的 embedded Qdrant index。调用者传入模型函数，并使用 `agentic_thesis` 导出的领域模型：
+
+```python
+from agentic_thesis import AgenticThesisEngine, ReviewDecision
+
+engine = await AgenticThesisEngine.open_local(
+    "./data",
+    embed=embed,
+    rerank=rerank,
+    analyze=analyze,
+)
+await engine.create_thesis(thesis)
+await engine.add_disclosure(disclosure)
+paused = await engine.run("aapl-2024-review", thesis.thesis_id)
+committed = await engine.review(
+    "aapl-2024-review", ReviewDecision(action="approve")
+)
+await engine.close()
+```
+
+可执行 contract 见 [`tests/test_engine_contract.py`](tests/test_engine_contract.py)。FastAPI、浏览器页面、SSE 和本地 scheduler 都是同一个 engine 外面的 self-host adapter，engine 调用者不需要依赖这些入口。
 
 ## AgenticThesis 能帮你解决什么
 
@@ -275,4 +313,4 @@ curl -X POST http://localhost:8000/theses/aapl-primary/sync
 
 ## 开源协议
 
-AgenticThesis 使用 [GNU General Public License v3.0](LICENSE) 开源。
+AgenticThesis 使用 [GNU Affero General Public License v3.0](LICENSE) 开源。

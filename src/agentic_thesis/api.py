@@ -18,13 +18,14 @@ from dotenv import load_dotenv
 from openai import AsyncOpenAI
 from pydantic import BaseModel, Field, field_validator
 
+from agentic_thesis.engine import AgenticThesisEngine
 from agentic_thesis.models import (
     DisclosureChunk,
     DisclosureDocument,
     ReviewDecision,
     ThesisSnapshot,
 )
-from agentic_thesis.rag import HybridRetriever, OpenAIModel, chunk_filing
+from agentic_thesis.rag import OpenAIModel, chunk_filing
 from agentic_thesis.workflow import AgenticThesisWorkflow
 
 
@@ -120,7 +121,7 @@ def _public_state(run_id: str, state: dict) -> dict:
     )
 
 
-async def _default_workflow() -> tuple[AgenticThesisWorkflow, ThesisSnapshot, list[DisclosureChunk]]:
+async def _default_engine() -> tuple[AgenticThesisEngine, ThesisSnapshot, list[DisclosureChunk]]:
     data_dir = Path(
         os.getenv("AGENTIC_THESIS_DATA_DIR", Path.home() / ".agentic-thesis")
     ).expanduser()
@@ -175,22 +176,17 @@ async def _default_workflow() -> tuple[AgenticThesisWorkflow, ThesisSnapshot, li
             + os.environ["AGENTIC_THESIS_EMBEDDING_MODEL"]
         ).encode()
     ).hexdigest()[:16]
-    retriever = HybridRetriever(
-        chunks,
+    engine = await AgenticThesisEngine.open_local(
+        data_dir,
         embed=model.embed,
         rerank=model.rerank,
-        qdrant_path=data_dir / "qdrant",
+        analyze=model.analyze,
+        initial_chunks=chunks,
         collection_name=collection_name,
     )
-    await retriever.index()
-    workflow = await AgenticThesisWorkflow.create(
-        data_dir / "agentic_thesis.sqlite",
-        retriever,
-        model.analyze,
-    )
-    await workflow.create_thesis(thesis)
+    await engine.create_thesis(thesis)
     for accession, filing_date, _, source_url in filings:
-        await workflow.add_disclosure(
+        await engine.add_disclosure(
             DisclosureDocument(
                 document_id=accession,
                 thesis_id=thesis.thesis_id,
@@ -198,14 +194,13 @@ async def _default_workflow() -> tuple[AgenticThesisWorkflow, ThesisSnapshot, li
                 filing_date=filing_date,
                 source_url=source_url,
                 content=documents[accession],
-            ),
-            [chunk for chunk in chunks if chunk.accession == accession],
+            )
         )
-    return workflow, thesis, chunks
+    return engine, thesis, chunks
 
 
 def create_app(
-    workflow: AgenticThesisWorkflow | None = None,
+    workflow: AgenticThesisEngine | AgenticThesisWorkflow | None = None,
     *,
     sec_client: Any = None,
     monitor_interval: float | None = None,
@@ -214,7 +209,8 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         if workflow is None:
-            app.state.workflow, app.state.thesis, app.state.chunks = await _default_workflow()
+            app.state.engine, app.state.thesis, app.state.chunks = await _default_engine()
+            app.state.workflow = app.state.engine._workflow
             user_agent = os.getenv("AGENTIC_THESIS_SEC_USER_AGENT")
             if app.state.sec_client is None and user_agent:
                 app.state.sec_client = SecEdgarClient(user_agent)
@@ -239,11 +235,16 @@ def create_app(
             task.cancel()
         await asyncio.gather(*pending, return_exceptions=True)
         if workflow is None:
-            await app.state.workflow.close()
+            await app.state.engine.close()
 
-    app = FastAPI(title="AgenticThesis", version="0.6.1", lifespan=lifespan)
+    app = FastAPI(title="AgenticThesis", version="0.7.0", lifespan=lifespan)
     if workflow is not None:
-        app.state.workflow = workflow
+        app.state.engine = (
+            workflow
+            if isinstance(workflow, AgenticThesisEngine)
+            else AgenticThesisEngine(workflow)
+        )
+        app.state.workflow = app.state.engine._workflow
         app.state.thesis = None
         app.state.chunks = None
     app.state.run_tasks = {}
@@ -374,7 +375,7 @@ def create_app(
     async def create_thesis(thesis: ThesisSnapshot) -> ThesisSnapshot:
         if thesis.version != 1:
             raise HTTPException(status_code=422, detail="a new thesis must start at version 1")
-        if not await app.state.workflow.create_thesis(thesis):
+        if not await app.state.engine.create_thesis(thesis):
             raise HTTPException(status_code=409, detail="thesis already exists")
         return thesis
 
@@ -504,20 +505,16 @@ def create_app(
     async def create_disclosure(document: DisclosureDocument) -> dict:
         if await app.state.workflow.get_thesis(document.thesis_id) is None:
             raise HTTPException(status_code=404, detail="thesis not found")
-        chunks = chunk_filing(
-            document.content,
-            accession=document.accession,
-            filing_date=document.filing_date,
-            source_url=document.source_url,
-        )
-        if not chunks:
-            raise HTTPException(status_code=422, detail="disclosure contains no text")
-        if not await app.state.workflow.add_disclosure(document, chunks):
+        try:
+            chunk_count = await app.state.engine.add_disclosure(document)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if chunk_count is None:
             raise HTTPException(status_code=409, detail="disclosure already exists")
         return {
             "document_id": document.document_id,
             "thesis_id": document.thesis_id,
-            "chunk_count": len(chunks),
+            "chunk_count": chunk_count,
         }
 
     @app.get("/runs")
@@ -526,7 +523,7 @@ def create_app(
 
     @app.get("/runs/{run_id}")
     async def get_run(run_id: str) -> dict:
-        state = await app.state.workflow.get(run_id)
+        state = await app.state.engine.get_run(run_id)
         if not state:
             raise HTTPException(status_code=404, detail="run not found")
         return _public_state(run_id, state)
@@ -568,7 +565,7 @@ def create_app(
 
     @app.post("/runs/{run_id}/review")
     async def review_run(run_id: str, decision: ReviewDecision) -> dict:
-        result = await app.state.workflow.resume(run_id, decision)
+        result = await app.state.engine.review(run_id, decision)
         if result.get("status") == "version_conflict":
             await publish(
                 run_id,

@@ -186,7 +186,11 @@ class HybridRetriever:
         self.chunks = chunks
         self.embed = embed
         self.rerank = rerank
-        self.bm25 = BM25Okapi([self.tokenize(chunk.text) for chunk in chunks])
+        self.bm25 = (
+            BM25Okapi([self.tokenize(chunk.text) for chunk in chunks])
+            if chunks
+            else None
+        )
         self.qdrant = (
             qdrant
             if qdrant is not None
@@ -268,6 +272,8 @@ class HybridRetriever:
             self.qdrant.close()
 
     def _bm25_ids(self, query: str, limit: int = 12) -> list[str]:
+        if self.bm25 is None:
+            return []
         scores = self.bm25.get_scores(self.tokenize(query))
         order = sorted(range(len(scores)), key=lambda index: scores[index], reverse=True)[:limit]
         return [self.chunks[index].chunk_id for index in order]

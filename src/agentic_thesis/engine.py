@@ -15,7 +15,7 @@ from agentic_thesis.workflow import AgenticThesisWorkflow
 
 
 class AgenticThesisEngine:
-    """Stable interface for the AgenticThesis domain workflow."""
+    """Public interface for the AgenticThesis domain workflow."""
 
     def __init__(self, workflow: AgenticThesisWorkflow) -> None:
         self._workflow = workflow

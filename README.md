@@ -16,6 +16,8 @@
 
 AgenticThesis is an open-source, stateful Python engine for monitoring how new company disclosures support, weaken, or invalidate an existing investment thesis. It keeps source-addressable evidence, reviewable changes, version history, and resumable workflow state application-owned.
 
+> **Status: Alpha.** Public interfaces may change before 1.0.
+
 The same Python distribution provides two entry points:
 
 - `agentic-thesis serve` runs the self-hosted application with SQLite and embedded Qdrant;
@@ -94,7 +96,7 @@ AGENTIC_THESIS_SEC_USER_AGENT="AgenticThesis your-email@example.com"
 ### 2. Start the application
 
 ```bash
-uvx --from git+https://github.com/suvimatt/agentic-thesis agentic-thesis serve
+uvx agentic-thesis==0.7.0 serve
 ```
 
 Open [http://127.0.0.1:8000](http://127.0.0.1:8000). The first start includes a ready-to-use Apple company thesis and two filings. Your company theses, source documents, vector index, checks, pending reviews, and approved updates remain under `~/.agentic-thesis/` after you close and restart the app.
@@ -115,10 +117,10 @@ The test suite uses deterministic retrieval and model substitutes where appropri
 
 ## Python Engine Interface
 
-Install the engine directly from the repository until the first PyPI release:
+Install the engine from PyPI:
 
 ```bash
-python -m pip install "agentic-thesis @ git+https://github.com/suvimatt/agentic-thesis.git"
+python -m pip install "agentic-thesis==0.7.0"
 ```
 
 `open_local` supplies the default SQLite checkpoint/state adapter and persistent embedded Qdrant index. Callers provide the model functions and use domain models exported from `agentic_thesis`:

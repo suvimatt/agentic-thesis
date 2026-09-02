@@ -89,7 +89,7 @@ AGENTIC_THESIS_SEC_USER_AGENT="AgenticThesis your-email@example.com"
 uvx --from git+https://github.com/suvimatt/agentic-thesis agentic-thesis serve
 ```
 
-Open [http://127.0.0.1:8000](http://127.0.0.1:8000). The first start includes a ready-to-use Apple company thesis and two filings. Your company theses, source documents, checks, pending reviews, and approved updates remain under `~/.agentic-thesis/` after you close and restart the app.
+Open [http://127.0.0.1:8000](http://127.0.0.1:8000). The first start includes a ready-to-use Apple company thesis and two filings. Your company theses, source documents, vector index, checks, pending reviews, and approved updates remain under `~/.agentic-thesis/` after you close and restart the app.
 
 Create another company thesis in the browser by entering the company, each reason you believe in the business, why it matters, and one fact that would prove it wrong. No JSON or schema knowledge is required.
 
@@ -152,7 +152,7 @@ The system has one application-owned workflow, not a collection of autonomous ag
 | Boundary | Responsibility | Implementation |
 | --- | --- | --- |
 | Interface | Manage theses and disclosures, poll selected SEC filing types, start work asynchronously, replay progress, and accept review decisions | FastAPI, background `asyncio` tasks, durable SSE |
-| Retrieval | Find claim-relevant passages across the filing corpus | deterministic section-labelled fixed-size chunks, BM25, in-process Qdrant vectors, RRF, API rerank only when BM25/vector top-1 differ and top-3 overlap is below 2 |
+| Retrieval | Find claim-relevant passages across the filing corpus | deterministic section-labelled fixed-size chunks, BM25, embedded persistent Qdrant vectors, RRF, API rerank only when BM25/vector top-1 differ and top-3 overlap is below 2 |
 | Working Context | Give each claim the smallest sufficient, source-addressable evidence | query-conditioned extractive `EvidencePack`, fixed 2,000-token per-claim budget, evidence IDs and source offsets |
 | Semantic analysis | Compare every thesis claim with supplied evidence only | API Structured Outputs → typed `ThesisDelta` |
 | Integrity gates | Prevent unsupported conclusions or unsafe state changes | quote/source validation, falsifier validation, exact-claim validation, Human Review |
@@ -166,7 +166,7 @@ The editable diagram source is [`docs/agentic-thesis-architecture.html`](docs/ag
 ## Implemented Capabilities
 
 - deterministic SEC HTML extraction, fixed-size chunks with section metadata, character offsets, and stable chunk IDs;
-- BM25 + Qdrant local vector retrieval and Reciprocal Rank Fusion, with listwise API reranking only when BM25/vector top-1 differ and top-3 overlap is below 2;
+- BM25 + persistent Qdrant local vector retrieval and Reciprocal Rank Fusion; only new chunks are embedded, with listwise API reranking only when BM25/vector top-1 differ and top-3 overlap is below 2;
 - extractive Context compression with a hard token budget, source coverage, and retained evidence IDs;
 - OpenAI Structured Outputs for the four-state `ThesisDelta` contract;
 - quote-to-source citation validation; unsupported output is downgraded to `unknown`;
@@ -181,11 +181,11 @@ The editable diagram source is [`docs/agentic-thesis-architecture.html`](docs/ag
 
 ## Verified Results
 
-Observed on the checked-in fixtures on 2026-09-01:
+Observed on the checked-in fixtures on 2026-09-02:
 
 | Check | Observed result |
 | --- | ---: |
-| Tests | 16 passed |
+| Tests | 17 passed |
 | Clean wheel install | passed outside the repository |
 | 2023 extracted tokens / chunks | 48,923 / 109 |
 | 2024 extracted tokens / chunks | 48,752 / 110 |
@@ -268,7 +268,7 @@ That scenario pauses a run at Human Review, closes and recreates the workflow on
 
 - automatic ingestion is intentionally limited to official SEC EDGAR submissions; no news, social media, or investor-relations crawlers;
 - the scheduler is one in-process `asyncio` loop that checks due state hourly and automatically performs successful SEC collection at most once per 24 hours; it is not a distributed job system or notification service;
-- Qdrant currently runs in-process; SQLite persists workflow and thesis state;
+- Qdrant runs embedded and persists vectors under the user data directory; SQLite persists workflow and thesis state;
 - no portfolio management, valuation, Multi-Agent roles, distributed scheduler, or queue;
 - the gold set contains 26 Apple questions across two filings; a second issuer and a current 26-query live API result are still missing;
 - no measured throughput, p50, p95, or production-readiness claim.

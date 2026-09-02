@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agentic-thesis"
-version = "0.6.0"
+version = "0.6.1"
 description = "An evidence-backed thesis monitoring system for long-term individual investors."
 requires-python = ">=3.11"
 dependencies = [

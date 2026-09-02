@@ -125,6 +125,8 @@ class AgenticThesisWorkflow:
                 state.chunks,
                 embed=retriever.embed,
                 rerank=retriever.rerank,
+                collection_name=retriever.collection_name,
+                qdrant=retriever.qdrant,
             )
             await retriever.index()
         results = await asyncio.gather(
@@ -635,3 +637,5 @@ class AgenticThesisWorkflow:
 
     async def close(self) -> None:
         await self.connection.close()
+        if isinstance(self.retriever, HybridRetriever):
+            self.retriever.close()

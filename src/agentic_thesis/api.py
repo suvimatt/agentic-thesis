@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 import os
 import urllib.parse
@@ -167,7 +168,20 @@ async def _default_workflow() -> tuple[AgenticThesisWorkflow, ThesisSnapshot, li
         model=os.getenv("AGENTIC_THESIS_MODEL", "gpt-5-mini"),
         embedding_model=os.environ["AGENTIC_THESIS_EMBEDDING_MODEL"],
     )
-    retriever = HybridRetriever(chunks, embed=model.embed, rerank=model.rerank)
+    collection_name = "chunks_" + hashlib.sha256(
+        (
+            os.environ["EMBEDDING_BASE_URL"]
+            + "|"
+            + os.environ["AGENTIC_THESIS_EMBEDDING_MODEL"]
+        ).encode()
+    ).hexdigest()[:16]
+    retriever = HybridRetriever(
+        chunks,
+        embed=model.embed,
+        rerank=model.rerank,
+        qdrant_path=data_dir / "qdrant",
+        collection_name=collection_name,
+    )
     await retriever.index()
     workflow = await AgenticThesisWorkflow.create(
         data_dir / "agentic_thesis.sqlite",
@@ -227,7 +241,7 @@ def create_app(
         if workflow is None:
             await app.state.workflow.close()
 
-    app = FastAPI(title="AgenticThesis", version="0.6.0", lifespan=lifespan)
+    app = FastAPI(title="AgenticThesis", version="0.6.1", lifespan=lifespan)
     if workflow is not None:
         app.state.workflow = workflow
         app.state.thesis = None

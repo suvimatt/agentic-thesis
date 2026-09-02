@@ -258,6 +258,64 @@ async def test_conditional_rerank_only_runs_when_retrievers_disagree() -> None:
     assert rerank_calls == ["services revenue margin"]
 
 
+async def test_persistent_vector_index_reuses_embeddings_and_scopes_search(
+    tmp_path: Path,
+) -> None:
+    alpha = DisclosureChunk(
+        chunk_id="alpha",
+        accession="test",
+        filing_date="2024-01-01",
+        section="Business",
+        text="Alpha recurring revenue expanded.",
+        start_char=0,
+        end_char=33,
+    )
+    beta = DisclosureChunk(
+        chunk_id="beta",
+        accession="test",
+        filing_date="2024-01-01",
+        section="Risk",
+        text="Beta customer concentration increased.",
+        start_char=34,
+        end_char=72,
+    )
+    embedding_batches: list[list[str]] = []
+
+    async def embed(texts: list[str]) -> list[list[float]]:
+        embedding_batches.append(texts.copy())
+        return HybridRetriever.deterministic_embeddings(texts)
+
+    async def rerank(query: str, candidates: list[DisclosureChunk]) -> list[str]:
+        return [chunk.chunk_id for chunk in candidates]
+
+    options = {
+        "embed": embed,
+        "rerank": rerank,
+        "qdrant_path": tmp_path / "qdrant",
+        "collection_name": "persistent-test",
+    }
+    first = HybridRetriever([alpha], **options)
+    await first.index()
+    assert embedding_batches == [[alpha.text]]
+    first.close()
+
+    restarted = HybridRetriever([alpha], **options)
+    await restarted.index()
+    assert embedding_batches == [[alpha.text]]
+    restarted.close()
+
+    expanded = HybridRetriever([alpha, beta], **options)
+    await expanded.index()
+    assert embedding_batches == [[alpha.text], [beta.text]]
+    expanded.close()
+
+    scoped = HybridRetriever([alpha], **options)
+    await scoped.index()
+    hits = await scoped.search("beta concentration", mode="vector", limit=1)
+    assert [hit.chunk.chunk_id for hit in hits] == ["alpha"]
+    scoped.close()
+
+
 def test_evidence_pack_respects_budget_and_rejects_forged_quote() -> None:
     chunks = [
         DisclosureChunk(

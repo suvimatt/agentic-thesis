@@ -2,10 +2,12 @@ import hashlib
 import html
 import math
 import re
+import uuid
 from collections import defaultdict
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from html.parser import HTMLParser
+from pathlib import Path
 from time import perf_counter
 from typing import Literal
 
@@ -177,12 +179,23 @@ class HybridRetriever:
         *,
         embed: Callable[[list[str]], Awaitable[list[list[float]]]],
         rerank: Callable[[str, list[DisclosureChunk]], Awaitable[list[str]]],
+        qdrant_path: str | Path | None = None,
+        collection_name: str = "chunks",
+        qdrant: QdrantClient | None = None,
     ) -> None:
         self.chunks = chunks
         self.embed = embed
         self.rerank = rerank
         self.bm25 = BM25Okapi([self.tokenize(chunk.text) for chunk in chunks])
-        self.qdrant = QdrantClient(":memory:")
+        self.qdrant = (
+            qdrant
+            if qdrant is not None
+            else QdrantClient(path=str(qdrant_path))
+            if qdrant_path
+            else QdrantClient(":memory:")
+        )
+        self._owns_qdrant = qdrant is None
+        self.collection_name = collection_name
         self.by_id = {chunk.chunk_id: chunk for chunk in chunks}
 
     @staticmethod
@@ -202,18 +215,57 @@ class HybridRetriever:
         return vectors
 
     async def index(self) -> None:
-        vectors = await self.embed([chunk.text for chunk in self.chunks])
-        self.qdrant.create_collection(
-            collection_name="chunks",
-            vectors_config=models.VectorParams(size=len(vectors[0]), distance=models.Distance.COSINE),
+        point_ids = {
+            chunk.chunk_id: self._point_id(chunk.chunk_id) for chunk in self.chunks
+        }
+        collection_exists = self.qdrant.collection_exists(self.collection_name)
+        existing = (
+            {
+                str(point.id)
+                for point in self.qdrant.retrieve(
+                    self.collection_name,
+                    ids=list(point_ids.values()),
+                    with_payload=False,
+                )
+            }
+            if collection_exists
+            else set()
         )
+        missing = [
+            chunk
+            for chunk in self.chunks
+            if point_ids[chunk.chunk_id] not in existing
+        ]
+        if not missing:
+            return
+        vectors = await self.embed([chunk.text for chunk in missing])
+        if not collection_exists:
+            self.qdrant.create_collection(
+                collection_name=self.collection_name,
+                vectors_config=models.VectorParams(
+                    size=len(vectors[0]),
+                    distance=models.Distance.COSINE,
+                ),
+            )
         self.qdrant.upsert(
-            collection_name="chunks",
+            collection_name=self.collection_name,
             points=[
-                models.PointStruct(id=index, vector=vector, payload={"chunk_id": chunk.chunk_id})
-                for index, (chunk, vector) in enumerate(zip(self.chunks, vectors, strict=True))
+                models.PointStruct(
+                    id=point_ids[chunk.chunk_id],
+                    vector=vector,
+                    payload={"chunk_id": chunk.chunk_id},
+                )
+                for chunk, vector in zip(missing, vectors, strict=True)
             ],
         )
+
+    @staticmethod
+    def _point_id(chunk_id: str) -> str:
+        return str(uuid.uuid5(uuid.NAMESPACE_URL, chunk_id))
+
+    def close(self) -> None:
+        if self._owns_qdrant:
+            self.qdrant.close()
 
     def _bm25_ids(self, query: str, limit: int = 12) -> list[str]:
         scores = self.bm25.get_scores(self.tokenize(query))
@@ -223,8 +275,15 @@ class HybridRetriever:
     async def _vector_ids(self, query: str, limit: int = 12) -> list[str]:
         vector = (await self.embed([query]))[0]
         response = self.qdrant.query_points(
-            collection_name="chunks",
+            collection_name=self.collection_name,
             query=vector,
+            query_filter=models.Filter(
+                must=[
+                    models.HasIdCondition(
+                        has_id=[self._point_id(chunk.chunk_id) for chunk in self.chunks]
+                    )
+                ]
+            ),
             limit=limit,
             with_payload=True,
         )

@@ -89,7 +89,7 @@ AGENTIC_THESIS_SEC_USER_AGENT="AgenticThesis your-email@example.com"
 uvx --from git+https://github.com/suvimatt/agentic-thesis agentic-thesis serve
 ```
 
-打开 [http://127.0.0.1:8000](http://127.0.0.1:8000)。首次启动已经准备好一份 Apple 公司 Thesis 和两份公司报告。你的公司 Theses、原始资料、历史检查、待确认结果和已经批准的更新都会保存在 `~/.agentic-thesis/`，关闭并重新启动后仍可继续使用。
+打开 [http://127.0.0.1:8000](http://127.0.0.1:8000)。首次启动已经准备好一份 Apple 公司 Thesis 和两份公司报告。你的公司 Theses、原始资料、vector index、历史检查、待确认结果和已经批准的更新都会保存在 `~/.agentic-thesis/`，关闭并重新启动后仍可继续使用。
 
 在浏览器中输入公司名称、你为什么看好这门生意、这个理由为什么重要，以及一个能够证明它错了的事实，即可创建新的公司 Thesis，不需要理解 JSON 或内部 schema。
 
@@ -152,7 +152,7 @@ python3 -m venv .venv
 | 边界 | 职责 | 实现 |
 | --- | --- | --- |
 | 接口 | 管理 theses 和 disclosures、检查指定 SEC filing types、异步启动任务、重放进度并接受审核决定 | FastAPI、后台 `asyncio` tasks、durable SSE |
-| 检索 | 在 Filing 语料中找到与 claim 相关的段落 | 确定性固定长度切块及 section 标签、BM25、进程内 Qdrant vector、RRF；仅在 BM25/vector top-1 不同且 top-3 交集少于 2 个 chunk 时调用 API rerank |
+| 检索 | 在 Filing 语料中找到与 claim 相关的段落 | 确定性固定长度切块及 section 标签、BM25、本地持久化 Qdrant vector、RRF；仅在 BM25/vector top-1 不同且 top-3 交集少于 2 个 chunk 时调用 API rerank |
 | Working Context | 为每条 claim 提供最小、充分、可定位来源的证据 | query-conditioned extractive `EvidencePack`、每条 claim 固定 2,000-token 预算、evidence ID 和原文偏移 |
 | 语义分析 | 只根据提供的证据比较每条 Thesis claim | API Structured Outputs → 类型化 `ThesisDelta` |
 | 完整性门禁 | 阻止无依据结论和不安全状态变更 | quote/source 校验、falsifier 校验、exact-claim 校验、Human Review |
@@ -166,7 +166,7 @@ python3 -m venv .venv
 ## 已实现能力
 
 - 确定性的 SEC HTML 提取、带 section metadata 的固定长度切块、字符偏移和稳定 chunk ID；
-- BM25 + Qdrant local vector retrieval 和 Reciprocal Rank Fusion；只有 BM25/vector top-1 不同且 top-3 交集少于 2 个 chunk 时才调用 listwise API reranking；
+- BM25 + 持久化 Qdrant local vector retrieval 和 Reciprocal Rank Fusion；只有新增 chunk 才调用 embedding，且只有 BM25/vector top-1 不同且 top-3 交集少于 2 个 chunk 时才调用 listwise API reranking；
 - 带硬性 token budget、来源覆盖和 retained evidence ID 的 extractive Context compression；
 - 使用 OpenAI Structured Outputs 实现四态 `ThesisDelta` contract；
 - quote-to-source 引用校验；无依据输出会降级为 `unknown`；
@@ -181,11 +181,11 @@ python3 -m venv .venv
 
 ## 验证结果
 
-2026-09-01 在仓库内 fixture 上的观测结果：
+2026-09-02 在仓库内 fixture 上的观测结果：
 
 | 检查项 | 观测结果 |
 | --- | ---: |
-| 测试 | 16 passed |
+| 测试 | 17 passed |
 | 全新环境 wheel 安装 | 在仓库外验证通过 |
 | 2023 提取 tokens / chunks | 48,923 / 109 |
 | 2024 提取 tokens / chunks | 48,752 / 110 |
@@ -268,7 +268,7 @@ curl -X POST http://localhost:8000/theses/aapl-primary/sync
 
 - 自动 ingestion 有意只支持官方 SEC EDGAR submissions，不做新闻、社交媒体或公司 IR 网站爬虫；
 - scheduler 只是一个每小时判断本地 due state、每 24 小时最多自动成功访问 SEC 一次的进程内 `asyncio` loop，不是分布式任务系统或通知服务；
-- Qdrant 当前运行在进程内；SQLite 持久化 Workflow 和 Thesis 状态；
+- Qdrant 以 embedded 模式运行，并把 vectors 持久化到用户数据目录；SQLite 持久化 Workflow 和 Thesis 状态；
 - 没有 portfolio management、valuation、Multi-Agent role、distributed scheduler 或 queue；
 - 当前 gold set 包含 Apple 两份 filing 的 26 条问题，但还缺少第二家公司和新的 26-query live API 结果；
 - 没有实测 throughput、p50、p95 或 production-readiness 声明。

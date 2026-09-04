@@ -9,7 +9,12 @@ from types import SimpleNamespace
 
 from httpx import ASGITransport, AsyncClient
 
-from agentic_thesis.api import SecEdgarClient, create_app
+from agentic_thesis.api import (
+    SecEdgarClient,
+    _sec_form_metadata,
+    _sec_form_selected,
+    create_app,
+)
 from agentic_thesis.models import (
     ArtifactInput,
     ClaimDelta,
@@ -87,8 +92,8 @@ def test_installed_cli_fails_fast_with_all_missing_credentials(tmp_path: Path) -
 def test_chunk_ids_are_stable() -> None:
     html = "<html><body><h2>Item 1. Business</h2><p>Alpha beta gamma.</p></body></html>"
 
-    first = chunk_filing(html, accession="0001", filing_date="2024-09-28", max_chars=20)
-    second = chunk_filing(html, accession="0001", filing_date="2024-09-28", max_chars=20)
+    first = chunk_filing(html, source_id="0001", source_date="2024-09-28", max_chars=20)
+    second = chunk_filing(html, source_id="0001", source_date="2024-09-28", max_chars=20)
 
     assert first == second
     assert first
@@ -114,8 +119,8 @@ def test_financial_filing_chunks_preserve_atomic_citations() -> None:
 
     chunks = chunk_filing(
         document,
-        accession="atomic",
-        filing_date="2024-09-28",
+        source_id="atomic",
+        source_date="2024-09-28",
         max_chars=60,
     )
     canonical_text = canonical_text_from_chunks(chunks)
@@ -146,8 +151,8 @@ def test_financial_filing_chunks_preserve_atomic_citations() -> None:
 
     plain_text = chunk_filing(
         "Management outlook unchanged",
-        accession="txt-1",
-        filing_date="2024-09-28",
+        source_id="txt-1",
+        source_date="2024-09-28",
     )
     assert plain_text[0].citation_spans[0].text == "Management outlook unchanged"
 
@@ -195,8 +200,8 @@ async def test_hybrid_retrieval_reports_measured_recall_at_5() -> None:
             files("agentic_thesis")
             .joinpath("sample_data", "filings", filename)
             .read_text(errors="ignore"),
-            accession=accession,
-            filing_date=filing_date,
+            source_id=accession,
+            source_date=filing_date,
         )
     ]
     cases = json.loads((root / "evals/gold.json").read_text())
@@ -301,8 +306,8 @@ async def test_conditional_rerank_only_runs_when_retrievers_disagree() -> None:
     chunks = [
         DisclosureChunk(
             chunk_id="services",
-            accession="test",
-            filing_date="2024-01-01",
+            source_id="test",
+            source_date="2024-01-01",
             section="Services",
             text="Services revenue and gross margin increased.",
             start_char=0,
@@ -310,8 +315,8 @@ async def test_conditional_rerank_only_runs_when_retrievers_disagree() -> None:
         ),
         DisclosureChunk(
             chunk_id="hardware",
-            accession="test",
-            filing_date="2024-01-01",
+            source_id="test",
+            source_date="2024-01-01",
             section="Products",
             text="Hardware unit sales declined.",
             start_char=45,
@@ -355,8 +360,8 @@ async def test_persistent_vector_index_reuses_embeddings_and_scopes_search(
 ) -> None:
     alpha = DisclosureChunk(
         chunk_id="alpha",
-        accession="test",
-        filing_date="2024-01-01",
+        source_id="test",
+        source_date="2024-01-01",
         section="Business",
         text="Alpha recurring revenue expanded.",
         start_char=0,
@@ -364,8 +369,8 @@ async def test_persistent_vector_index_reuses_embeddings_and_scopes_search(
     )
     beta = DisclosureChunk(
         chunk_id="beta",
-        accession="test",
-        filing_date="2024-01-01",
+        source_id="test",
+        source_date="2024-01-01",
         section="Risk",
         text="Beta customer concentration increased.",
         start_char=34,
@@ -415,8 +420,8 @@ def test_evidence_pack_respects_budget_and_rejects_forged_quote() -> None:
     chunks = [
         DisclosureChunk(
             chunk_id="baseline",
-            accession="old",
-            filing_date="2023-09-30",
+            source_id="old",
+            source_date="2023-09-30",
             section="Gross Margin",
             text="Services gross margin was 70.8 percent. " + "Baseline detail. " * 80,
             start_char=0,
@@ -424,8 +429,8 @@ def test_evidence_pack_respects_budget_and_rejects_forged_quote() -> None:
         ),
         DisclosureChunk(
             chunk_id="new",
-            accession="new",
-            filing_date="2024-09-28",
+            source_id="new",
+            source_date="2024-09-28",
             section="Gross Margin",
             text="Products gross margin was 37.2 percent. Services gross margin was 73.9 percent. "
             + "New filing detail. " * 80,
@@ -441,7 +446,7 @@ def test_evidence_pack_respects_budget_and_rejects_forged_quote() -> None:
     )
 
     assert pack.tokens_after <= 80 < pack.tokens_before
-    assert {item.filing_date for item in pack.items} == {"2023-09-30", "2024-09-28"}
+    assert {item.source_date for item in pack.items} == {"2023-09-30", "2024-09-28"}
     assert any("Services gross margin" in item.quote for item in pack.items)
     valid = ThesisDelta(
         base_thesis_version=1,
@@ -472,8 +477,8 @@ def test_evidence_pack_respects_budget_and_rejects_forged_quote() -> None:
 async def test_structured_analysis_receives_compressed_quotes_not_source_chunks() -> None:
     chunk = DisclosureChunk(
         chunk_id="new",
-        accession="new",
-        filing_date="2024-09-28",
+        source_id="new",
+        source_date="2024-09-28",
         section="Gross Margin",
         text="Services gross margin was 73.9 percent. Nearby context. "
         + "Unselected source-only detail. " * 100,
@@ -581,7 +586,7 @@ async def test_app_shutdown_waits_for_inflight_run_cancellation(tmp_path: Path) 
         ],
     )
     content = "<p>Services gross margin was 73.9 percent.</p>"
-    chunks = chunk_filing(content, accession="new", filing_date="2024-09-28")
+    chunks = chunk_filing(content, source_id="new", source_date="2024-09-28")
 
     class BlockingRetriever:
         async def search_with_timings(self, query: str, *, limit: int):
@@ -609,8 +614,8 @@ async def test_app_shutdown_waits_for_inflight_run_cancellation(tmp_path: Path) 
                 json={
                     "document_id": "new",
                     "thesis_id": thesis.thesis_id,
-                    "accession": "new",
-                    "filing_date": "2024-09-28",
+                    "source_id": "new",
+                    "source_date": "2024-09-28",
                     "content": content,
                 },
             )
@@ -679,7 +684,7 @@ async def test_langgraph_resumes_after_restart_and_rejects_stale_commit(tmp_path
         ],
     )
     content = "<p>Services gross margin was 73.9 percent.</p>"
-    chunks = chunk_filing(content, accession="new", filing_date="2024-09-28")
+    chunks = chunk_filing(content, source_id="new", source_date="2024-09-28")
 
     class FakeRetriever:
         async def search(self, query: str, *, mode: str, limit: int) -> list[RetrievalHit]:
@@ -758,7 +763,7 @@ async def test_langgraph_resumes_after_restart_and_rejects_stale_commit(tmp_path
         assert "What fact would prove this wrong?" in page.text
         assert "Investment case JSON" not in page.text
         assert 'id="thesis-json"' not in page.text
-        assert "Add a company filing manually" in page.text
+        assert "Add a source document manually" in page.text
         assert "Keep my current view" in page.text
         assert "Save this evidence update" in page.text
         assert "Still supported" in page.text
@@ -792,8 +797,8 @@ async def test_langgraph_resumes_after_restart_and_rejects_stale_commit(tmp_path
             json={
                 "document_id": "api-new",
                 "thesis_id": api_thesis.thesis_id,
-                "accession": "new",
-                "filing_date": "2024-09-28",
+                "source_id": "new",
+                "source_date": "2024-09-28",
                 "content": content,
             },
         )
@@ -887,8 +892,8 @@ async def test_langgraph_resumes_after_restart_and_rejects_stale_commit(tmp_path
                 json={
                     "document_id": "error-new",
                     "thesis_id": error_thesis.thesis_id,
-                    "accession": "new",
-                "filing_date": "2024-09-28",
+                    "source_id": "new",
+                "source_date": "2024-09-28",
                 "content": content,
             },
         )
@@ -925,7 +930,7 @@ async def test_run_history_and_sse_replay_survive_restart(tmp_path: Path) -> Non
     )
     content = "<p>Services gross margin was 73.9 percent.</p>"
     chunk = chunk_filing(
-        content, accession="history", filing_date="2024-09-28"
+        content, source_id="history", source_date="2024-09-28"
     )[0]
 
     class FakeRetriever:
@@ -957,8 +962,8 @@ async def test_run_history_and_sse_replay_survive_restart(tmp_path: Path) -> Non
             json={
                 "document_id": "history-disclosure",
                 "thesis_id": thesis.thesis_id,
-                "accession": "history",
-                "filing_date": "2024-09-28",
+                "source_id": "history",
+                "source_date": "2024-09-28",
                 "content": content,
             },
         )
@@ -1011,8 +1016,8 @@ async def test_run_history_and_sse_replay_survive_restart(tmp_path: Path) -> Non
 async def test_multiple_theses_use_only_their_own_manual_disclosures(tmp_path: Path) -> None:
     apple_chunk = DisclosureChunk(
         chunk_id="bootstrap",
-        accession="bootstrap",
-        filing_date="2024-01-01",
+        source_id="bootstrap",
+        source_date="2024-01-01",
         section="Unknown",
         text="Bootstrap corpus.",
         start_char=0,
@@ -1069,8 +1074,8 @@ async def test_multiple_theses_use_only_their_own_manual_disclosures(tmp_path: P
                 json={
                     "document_id": f"{thesis_id}-2024",
                     "thesis_id": thesis_id,
-                    "accession": f"{thesis_id}-accession",
-                    "filing_date": "2024-09-28",
+                    "source_id": f"{thesis_id}-accession",
+                    "source_date": "2024-09-28",
                     "source_url": f"https://example.com/{thesis_id}",
                     "content": f"<html><body>{company} reported stronger {keyword} performance.</body></html>",
                 },
@@ -1206,13 +1211,35 @@ async def test_sec_client_traverses_submission_history_and_collects_artifacts() 
     ]
 
 
+def test_sec_form_matrix_classifies_and_includes_amendments() -> None:
+    expected = {
+        "10-K": "periodic_report",
+        "10-Q/A": "periodic_report",
+        "8-K": "current_report",
+        "DEF 14A": "proxy",
+        "3": "insider_ownership",
+        "4": "insider_ownership",
+        "5": "insider_ownership",
+        "SC 13D/A": "beneficial_ownership",
+        "SC 13G": "beneficial_ownership",
+        "13F-HR": "institutional_holdings",
+        "N-PX": "other",
+    }
+    assert {
+        form: _sec_form_metadata(form)["form_family"] for form in expected
+    } == expected
+    assert _sec_form_selected("10-K/A", ["10-K"])
+    assert _sec_form_selected("SC 13D/A", ["SC 13D"])
+    assert not _sec_form_selected("8-K", ["10-K"])
+
+
 async def test_sec_sync_imports_one_new_filing_once_and_starts_review(
     tmp_path: Path,
 ) -> None:
     bootstrap = DisclosureChunk(
         chunk_id="bootstrap",
-        accession="bootstrap",
-        filing_date="2024-01-01",
+        source_id="bootstrap",
+        source_date="2024-01-01",
         section="Business",
         text="Services are strategically important.",
         start_char=0,
@@ -1328,7 +1355,7 @@ async def test_sec_sync_imports_one_new_filing_once_and_starts_review(
             await client.get("/radar", params={"thesis_id": "apple-monitor"})
         ).json()
         assert radar[0]["outcome"] == "needs_review"
-        assert radar[0]["reason_codes"] == ["configured_sec_form"]
+        assert radar[0]["reason_codes"] == ["high_impact_periodic_report"]
         assert radar[0]["run_id"] == "sec-apple-monitor-0000320193-25-000079"
         event = (await client.get(f"/events/{radar[0]['event_id']}")).json()
         assert event["metadata"]["form_family"] == "periodic_report"
@@ -1363,8 +1390,8 @@ async def test_sec_sync_imports_one_new_filing_once_and_starts_review(
             json={
                 "document_id": "different-document-id",
                 "thesis_id": "apple-monitor",
-                "accession": "0000320193-25-000079",
-                "filing_date": "2025-08-01",
+                "source_id": "0000320193-25-000079",
+                "source_date": "2025-08-01",
                 "source_url": "https://example.com/changed-copy",
                 "content": "<html><body>Changed copy of the same filing.</body></html>",
             },
@@ -1387,8 +1414,8 @@ async def test_enabled_sec_monitor_polls_and_creates_a_review_run(
 ) -> None:
     bootstrap = DisclosureChunk(
         chunk_id="bootstrap",
-        accession="bootstrap",
-        filing_date="2024-01-01",
+        source_id="bootstrap",
+        source_date="2024-01-01",
         section="Business",
         text="Cloud demand remained durable.",
         start_char=0,

@@ -65,8 +65,8 @@ async def main() -> None:
             files("agentic_thesis")
             .joinpath("sample_data", "filings", filename)
             .read_text(errors="ignore"),
-            accession=accession,
-            filing_date=filing_date,
+            source_id=accession,
+            source_date=filing_date,
             source_url=source_url,
         )
     ]
@@ -166,8 +166,8 @@ async def main() -> None:
         disclosure = case["disclosure"]
         chunk = DisclosureChunk(
             chunk_id=case["case_id"],
-            accession=disclosure["accession"],
-            filing_date=disclosure["filing_date"],
+            source_id=disclosure["source_id"],
+            source_date=disclosure["source_date"],
             section="Curated evaluation excerpt",
             text=disclosure["content"],
             start_char=0,

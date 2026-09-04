@@ -10,8 +10,8 @@
       "falsifiers": ["Greater China net sales materially decline because of lower product demand"]
     },
     "disclosure": {
-      "accession": "aapl-2023",
-      "filing_date": "2023-09-30",
+      "source_id": "aapl-2023",
+      "source_date": "2023-09-30",
       "source_url": "https://www.sec.gov/Archives/edgar/data/320193/000032019323000106/aapl-20230930.htm",
       "content": "Greater China net sales decreased 2% or $1.6 billion during 2023 compared to 2022. The weakness in foreign currencies relative to the U.S. dollar had an unfavorable year-over-year impact on Greater China net sales."
     },
@@ -29,8 +29,8 @@
       "falsifiers": ["Greater China net sales materially decline because of lower product demand"]
     },
     "disclosure": {
-      "accession": "aapl-2024",
-      "filing_date": "2024-09-28",
+      "source_id": "aapl-2024",
+      "source_date": "2024-09-28",
       "source_url": "https://www.sec.gov/Archives/edgar/data/320193/000032019324000123/aapl-20240928.htm",
       "content": "Greater China net sales decreased 8% or $5.4 billion during 2024 compared to 2023. The year-over-year decrease in Greater China net sales was primarily driven by lower net sales of iPhone and iPad."
     },
@@ -48,8 +48,8 @@
       "falsifiers": ["Microsoft Cloud revenue declines year over year"]
     },
     "disclosure": {
-      "accession": "msft-2024",
-      "filing_date": "2024-06-30",
+      "source_id": "msft-2024",
+      "source_date": "2024-06-30",
       "source_url": "https://www.microsoft.com/investor/reports/ar24/index.html",
       "content": "Microsoft Cloud revenue increased 23% to $137.4 billion. Azure and other cloud services revenue grew 30%."
     },
@@ -67,8 +67,8 @@
       "falsifiers": ["Microsoft Cloud revenue declines year over year"]
     },
     "disclosure": {
-      "accession": "msft-2024-linkedin-excerpt",
-      "filing_date": "2024-06-30",
+      "source_id": "msft-2024-linkedin-excerpt",
+      "source_date": "2024-06-30",
       "source_url": "https://www.microsoft.com/investor/reports/ar24/index.html",
       "content": "LinkedIn revenue increased 9%. Search and news advertising revenue excluding traffic acquisition costs increased 12%."
     },

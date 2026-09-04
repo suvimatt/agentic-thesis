@@ -25,23 +25,26 @@ You record those reasons and what would prove each one wrong. AgenticThesis cont
 
 > AgenticThesis does not just tell you what changed at a company. It shows how new evidence changes your thesis—and requires you to approve that change.
 
-> **Status: v1.0 alpha development.** The latest PyPI release remains v0.9.0.
+> **Status: v1.1 alpha development.** The latest PyPI release remains v0.9.0.
 
 The same Python distribution provides two entry points:
 
 - `agentic-thesis serve` runs the self-hosted application with SQLite and embedded Qdrant;
 - `AgenticThesisEngine` is the supported interface for Python applications.
 
-### What does v1.0 alpha.1 actually add?
+### What does v1.1 alpha.1 actually add?
 
-**v0.9 was closer to a filing reader: you supplied a report, and it checked that report against your reasons for owning the company. v1.0 alpha.1 starts turning it into a radar that watches for new official information.**
+**v1.1 alpha.1 turns the SEC-only alpha into an authoritative company-information radar with one recoverable processing path.**
 
 - It remembers the last SEC filing it checked and processes only newer filings. If that filing has fallen off the latest list, it searches the older SEC pages to find it;
 - it preserves the SEC file listing, official report, important attachments, and XML data exactly as received, together with their source, content fingerprint, and parsing result;
 - if one attachment fails to download, the successfully collected material remains usable and the missing attachment and error stay visible;
-- each new filing goes through Radar first: readable text starts the existing thesis workflow and waits for Human Review; a filing without readable text is recorded without forcing the AI to reach a conclusion.
+- SEC amendments are included when their base form is watched and linked to the original event when the reporting period makes that relationship deterministic;
+- explicitly configured issuer IR pages can discover same-site releases, presentations, reports, and official text transcripts, retaining the page version that exposed each link and observing content replacement or link removal;
+- native PDFs retain page-addressable citations; image-only PDFs remain `needs_ocr` unless the engine caller explicitly supplies a bounded OCR function;
+- event artifacts, fetch failures, the versioned claim/falsifier Radar decision, and any run registration commit atomically. Only `needs_review` events start analysis; `digest` events remain visible without an LLM call.
 
-In short, **v0.9 handled “read this filing”; v1.0 alpha.1 adds the preceding “find new filings, preserve the complete source record, and decide whether thesis review should start” workflow.**
+In short, **the engine now discovers official SEC and issuer events, preserves their exact source record, routes them against explicit thesis claims and falsifiers, and can recover the same run after interruption.**
 
 AgenticThesis lets you write down:
 
@@ -113,14 +116,14 @@ AGENTIC_THESIS_SEC_USER_AGENT="AgenticThesis your-email@example.com"
 
 ### 2. Start the application
 
-The latest published release can be started with `uvx agentic-thesis==0.9.0 serve`. Use the development setup below to run the current v1.0 alpha code.
+The latest published release can be started with `uvx agentic-thesis==0.9.0 serve`. Use the development setup below to run the current v1.1 alpha code.
 
 Open [http://127.0.0.1:8000](http://127.0.0.1:8000). The first start includes a ready-to-use Apple example and two company reports. Your saved reasons, source documents, vector index, checks, pending reviews, and approved updates remain under `~/.agentic-thesis/` after you close and restart the app.
 
-Current `main` uses a clean v1.0 schema and rejects every pre-v1.0 data directory without modifying it. Use a fresh directory:
+Current `main` uses a clean v1.1 schema and rejects every earlier data directory without modifying it. Use a fresh directory:
 
 ```bash
-agentic-thesis serve --data-dir ~/.agentic-thesis-v10-alpha
+agentic-thesis serve --data-dir ~/.agentic-thesis-v11-alpha
 ```
 
 Add another company in the browser by entering why you own or follow its stock, why that reason matters, and one fact that would prove it wrong. No JSON or schema knowledge is required.
@@ -220,7 +223,7 @@ The system has one application-owned workflow, not a collection of autonomous ag
 
 | Boundary | Responsibility | Implementation |
 | --- | --- | --- |
-| Evidence ingestion | Preserve new official company files before asking AI to interpret them | company submission records (disclosure events), SEC file listings, raw report and attachment bytes, SHA-256 content fingerprints, parser outcomes, download failures, and records of every check |
+| Evidence ingestion | Preserve new official company files before asking AI to interpret them | atomic source-neutral events, SEC and issuer IR discovery pages, raw report and attachment bytes, SHA-256 fingerprints, parser outcomes, download failures, and records of every check |
 | Retrieval | Find claim-relevant context within the run's bound disclosure | deterministic structure-aware windows made from intact sentences, list items, and contextualized table rows; claim and falsifier queries; BM25, embedded persistent Qdrant vectors, RRF, and conditional API rerank |
 | Working Context | Give each claim the smallest sufficient, source-addressable evidence | query-conditioned `EvidencePack` that packs whole citation spans within a 2,000-token per-claim budget, with span-bound evidence IDs and exact source offsets |
 | Semantic analysis | Compare every thesis claim with supplied evidence only | API Structured Outputs → typed `ThesisDelta` |
@@ -237,7 +240,10 @@ The editable diagram source is [`docs/agentic-thesis-architecture.html`](docs/ag
 - automatic reading of SEC web filings that removes hidden machine-only tags while preserving sections, complete sentences, lists, and table structure;
 - exact preservation of each SEC file listing, official report, important attachment, and XML/XBRL file, together with its source, file type, content fingerprint, and parsing result;
 - memory of the last checked filing plus traversal of older SEC pages when needed; one failed attachment gets its own error record without discarding material already collected;
-- one saved Radar outcome for every new filing: readable material enters review (`needs_review`), while a filing without readable material is only recorded (`digest`);
+- one versioned, deterministic Radar outcome for every event: authority, parse state, high-impact form family, claim matches, and falsifier matches decide `needs_review` or `digest` before model use;
+- atomic event processing that commits source artifacts, fetch failures, Radar decisions, and run registration together, with replay-safe deterministic IDs;
+- configured issuer-owned IR HTML/feed monitoring with one-hop same-host discovery of reports, releases, presentations, and official transcripts, including replacement and removal events;
+- native PDF extraction with exact page citations plus opt-in OCR constrained to one concurrent call and explicit byte/page limits;
 - bounded retrieval windows made from intact citation spans rather than token-count slicing, with stable IDs and exact canonical offsets;
 - claim-and-falsifier retrieval through BM25 + persistent Qdrant vectors and Reciprocal Rank Fusion; only new windows are embedded, with listwise API reranking only when BM25/vector top-1 differ and top-3 overlap is below 2;
 - extractive Context packing with a hard token budget, whole-span selection, source coverage, and retained evidence IDs;
@@ -259,7 +265,7 @@ Observed on the checked-in fixtures on 2026-09-04:
 
 | Check | Observed result |
 | --- | ---: |
-| Tests | 23 passed |
+| Tests | 32 passed |
 | Wheel build | passed |
 | 2023 extracted tokens / retrieval windows | 48,777 / 111 |
 | 2024 extracted tokens / retrieval windows | 48,903 / 112 |
@@ -325,7 +331,17 @@ curl -X PUT http://localhost:8000/theses/aapl-primary/monitor \
 curl -X POST http://localhost:8000/theses/aapl-primary/sync
 ```
 
-The first successful check imports only the latest matching company filing and remembers its unique SEC identifier; it does not suddenly load years of history. Later checks look only for newer filings and search older SEC pages if the remembered filing has fallen off the latest list. `/events`, `/artifacts`, `/collection-attempts`, and `/radar` show what was found, which original files were preserved, which attachments were missed, and why thesis review did or did not start. A failed check is not recorded as a success, so the next check can retry. Every new filing with readable text starts its own `ThesisDelta` workflow and stops at Human Review.
+Configure and check explicitly trusted issuer IR pages:
+
+```bash
+curl -X PUT http://localhost:8000/theses/aapl-primary/ir-monitor \
+  -H 'content-type: application/json' \
+  -d '{"urls":["https://www.example.com/investors"],"enabled":true}'
+
+curl -X POST http://localhost:8000/theses/aapl-primary/ir-sync
+```
+
+The first successful SEC check imports only the latest matching filing and remembers its accession; later checks search older SEC pages when necessary. IR checks follow only explicitly configured HTTPS pages and one-hop same-host official-document links. `/events`, `/artifacts`, `/collection-attempts`, and `/radar` show what was found, preserved, missed, and routed. A failed check is not recorded as a success. Only a `needs_review` decision registers a `ThesisDelta` run, which stops at Human Review.
 
 The browser can also create/list theses, import/list disclosures, list historical runs, and reopen pending reviews. The generated `/docs` page documents the same HTTP API.
 
@@ -342,11 +358,13 @@ That scenario pauses a run at Human Review, closes and recreates the workflow on
 
 ## Deliberate limits
 
-- v1.0 alpha.1 currently watches only SEC EDGAR; company IR pages, PDF/OCR, call transcripts, and news leads are not connected yet;
-- the scheduler is one in-process `asyncio` loop that checks due state hourly and automatically performs successful SEC collection at most once per 24 hours; it is not a distributed job system or notification service;
+- IR discovery is intentionally limited to configured public HTTPS pages and relevant one-hop same-host links; there is no headless browser, generic crawler, anti-bot bypass, or audio transcription;
+- OCR is disabled unless an engine caller supplies it; the package never downloads an OCR model automatically;
+- reliable secondary news is not connected yet; when added, it must remain a verification lead and cannot independently authorize a thesis revision;
+- the scheduler is one in-process `asyncio` loop that checks due SEC and IR state hourly and performs successful collection at most once per 24 hours; it is not a distributed job system or notification service;
 - Qdrant runs embedded and persists vectors under the user data directory; SQLite persists workflow and thesis state;
 - no share-price prediction, advice about how much money to put into a company, Multi-Agent roles, distributed scheduler, or queue;
-- the retrieval gold set contains 26 Apple questions across two filings; the four-case thesis-delta set adds Microsoft, but broader issuer coverage and a completed current v1.0 alpha live API result are still missing;
+- the retrieval gold set contains 26 Apple questions, the thesis-delta set has four cases, and the deterministic Radar set has five routing cases; broader issuer coverage and a completed current v1.1 alpha live API result are still missing;
 - no measured throughput, p50, p95, or production-readiness claim.
 
 ## License

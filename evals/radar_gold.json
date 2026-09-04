@@ -1,0 +1,45 @@
+{
+  "policy_version": "thesis-falsifier-v1",
+  "cases": [
+    {
+      "case_id": "issuer-falsifier-match",
+      "authority": "issuer",
+      "form_family": "",
+      "text": "Revenue declines materially as customer demand weakens.",
+      "expected_outcome": "needs_review",
+      "expected_reason": "matched_falsifier"
+    },
+    {
+      "case_id": "periodic-report-high-impact",
+      "authority": "regulator",
+      "form_family": "periodic_report",
+      "text": "The registrant filed its annual report.",
+      "expected_outcome": "needs_review",
+      "expected_reason": "high_impact_periodic_report"
+    },
+    {
+      "case_id": "issuer-unrelated-digest",
+      "authority": "issuer",
+      "form_family": "",
+      "text": "The board scheduled its annual shareholder meeting.",
+      "expected_outcome": "digest",
+      "expected_reason": "no_thesis_match"
+    },
+    {
+      "case_id": "secondary-needs-verification",
+      "authority": "secondary",
+      "form_family": "",
+      "text": "Revenue declines materially according to a news report.",
+      "expected_outcome": "digest",
+      "expected_reason": "needs_verification"
+    },
+    {
+      "case_id": "unparseable-visible",
+      "authority": "regulator",
+      "form_family": "current_report",
+      "text": "",
+      "expected_outcome": "digest",
+      "expected_reason": "no_parseable_evidence"
+    }
+  ]
+}

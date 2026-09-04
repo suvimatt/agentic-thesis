@@ -1,8 +1,10 @@
 import asyncio
 import hashlib
+import ipaddress
 import json
 import mimetypes
 import os
+import socket
 import urllib.parse
 import urllib.request
 import uuid
@@ -13,6 +15,7 @@ from html.parser import HTMLParser
 from importlib.resources import files
 from pathlib import Path
 from typing import Any
+from xml.etree import ElementTree
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
@@ -30,6 +33,7 @@ from agentic_thesis.models import (
     DisclosureDocument,
     DisclosureEvent,
     DisclosureSummary,
+    IrMonitor,
     RadarEntry,
     RadarOutcome,
     ReviewDecision,
@@ -44,6 +48,52 @@ from agentic_thesis.models import (
 )
 from agentic_thesis.rag import OpenAIModel
 from agentic_thesis.workflow import AgenticThesisWorkflow
+
+
+def _validate_ir_url(value: str, *, resolve: bool = False) -> str:
+    if len(value) > 2_000:
+        raise ValueError("IR URLs must not exceed 2000 characters")
+    parsed = urllib.parse.urlparse(value)
+    hostname = (parsed.hostname or "").lower().rstrip(".")
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError("IR URLs must contain a valid port") from exc
+    if (
+        parsed.scheme != "https"
+        or not hostname
+        or hostname == "localhost"
+        or hostname.endswith(".localhost")
+        or parsed.username is not None
+        or parsed.password is not None
+    ):
+        raise ValueError("IR URLs must be public HTTPS URLs without credentials")
+
+    addresses = []
+    try:
+        addresses.append(ipaddress.ip_address(hostname))
+    except ValueError:
+        if resolve:
+            addresses.extend(
+                ipaddress.ip_address(item[4][0].split("%", 1)[0])
+                for item in socket.getaddrinfo(
+                    hostname, port or 443, type=socket.SOCK_STREAM
+                )
+            )
+    if any(not address.is_global for address in addresses):
+        raise ValueError("IR URLs must not target non-public addresses")
+    return value
+
+
+class _PublicHttpsRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        _validate_ir_url(newurl, resolve=True)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _ir_external_id(resource_url: str, version: str) -> str:
+    url_id = hashlib.sha256(resource_url.encode()).hexdigest()[:24]
+    return f"{url_id}:{version}"
 
 
 class StartRun(BaseModel):
@@ -73,6 +123,19 @@ class SecMonitorInput(BaseModel):
         ):
             raise ValueError("filing forms contain invalid characters")
         return forms
+
+
+class IrMonitorInput(BaseModel):
+    urls: list[str] = Field(min_length=1, max_length=10)
+    enabled: bool = True
+
+    @field_validator("urls")
+    @classmethod
+    def validate_urls(cls, values: list[str]) -> list[str]:
+        urls = list(dict.fromkeys(value.strip() for value in values))
+        for value in urls:
+            _validate_ir_url(value)
+        return urls
 
 
 class _SecFilingIndexParser(HTMLParser):
@@ -105,6 +168,105 @@ class _SecFilingIndexParser(HTMLParser):
             self._row = None
 
 
+class _IrLinkParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.links: list[tuple[str, str]] = []
+        self._href: str | None = None
+        self._text: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag.lower() == "a":
+            self._href = dict(attrs).get("href")
+            self._text = []
+
+    def handle_data(self, data: str) -> None:
+        if self._href is not None:
+            self._text.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag.lower() == "a" and self._href:
+            self.links.append((self._href, " ".join(self._text).strip()))
+            self._href = None
+            self._text = []
+
+
+class OfficialIrClient:
+    def __init__(self, user_agent: str = "AgenticThesis IR monitor") -> None:
+        self.user_agent = user_agent
+
+    def _read(self, url: str) -> tuple[bytes, str]:
+        _validate_ir_url(url, resolve=True)
+        request = urllib.request.Request(
+            url, headers={"User-Agent": self.user_agent, "Accept": "*/*"}
+        )
+        opener = urllib.request.build_opener(_PublicHttpsRedirectHandler())
+        with opener.open(request, timeout=30) as response:
+            content = response.read(50_000_001)
+            media_type = response.headers.get_content_type()
+        if len(content) > 50_000_000:
+            raise ValueError("IR response exceeds 50 MB")
+        return content, media_type
+
+    async def read(self, url: str) -> tuple[bytes, str]:
+        return await asyncio.to_thread(self._read, url)
+
+    @staticmethod
+    def discover(
+        root_url: str, content: bytes, media_type: str
+    ) -> list[tuple[str, str, str | None]]:
+        text = content.decode("utf-8", errors="replace")
+        links: list[tuple[str, str, str | None]] = []
+        if media_type in {"application/rss+xml", "application/atom+xml", "application/xml", "text/xml"}:
+            root = ElementTree.fromstring(text)
+            for item in root.iter():
+                tag = item.tag.rsplit("}", 1)[-1].lower()
+                if tag not in {"item", "entry"}:
+                    continue
+                title = ""
+                href = ""
+                published = None
+                for child in item.iter():
+                    child_tag = child.tag.rsplit("}", 1)[-1].lower()
+                    if child_tag == "title" and child.text:
+                        title = child.text.strip()
+                    elif child_tag == "link":
+                        href = child.attrib.get("href") or (child.text or "").strip()
+                    elif child_tag in {"published", "updated", "pubdate"} and child.text:
+                        published = child.text.strip()[:10]
+                if href:
+                    links.append((urllib.parse.urljoin(root_url, href), title, published))
+        elif media_type in {"text/html", "application/xhtml+xml"}:
+            parser = _IrLinkParser()
+            parser.feed(text)
+            links = [
+                (urllib.parse.urljoin(root_url, href), title, None)
+                for href, title in parser.links
+            ]
+        else:
+            links = [(root_url, "", None)]
+
+        root_host = urllib.parse.urlparse(root_url).hostname
+        terms = {
+            "annual", "earnings", "event", "financial", "presentation",
+            "quarter", "release", "report", "results", "transcript",
+        }
+        selected = []
+        direct_document = media_type not in {
+            "application/rss+xml", "application/atom+xml", "application/xml",
+            "text/xml", "text/html", "application/xhtml+xml",
+        }
+        for url, title, published in links:
+            parsed = urllib.parse.urlparse(url)
+            haystack = f"{url} {title}".lower()
+            if (
+                parsed.scheme == "https"
+                and parsed.hostname == root_host
+                and (direct_document or any(term in haystack for term in terms))
+            ):
+                selected.append((url, title, published))
+        return list(dict.fromkeys(selected))[:20]
+
 def _sec_form_metadata(form: str) -> dict[str, str]:
     normalized = form.strip().upper()
     is_amendment = normalized.endswith("/A")
@@ -131,6 +293,13 @@ def _sec_form_metadata(form: str) -> dict[str, str]:
     }
 
 
+def _sec_form_selected(form: str, configured: list[str]) -> bool:
+    normalized = form.strip().upper()
+    return normalized in configured or (
+        normalized.endswith("/A") and normalized[:-2] in configured
+    )
+
+
 class SecEdgarClient:
     def __init__(self, user_agent: str) -> None:
         self.user_agent = user_agent
@@ -141,9 +310,9 @@ class SecEdgarClient:
             headers={"User-Agent": self.user_agent, "Accept": "*/*"},
         )
         with urllib.request.urlopen(request, timeout=30) as response:
-            content = response.read(10_000_001)
-        if len(content) > 10_000_000:
-            raise ValueError("SEC response exceeds 10 MB")
+            content = response.read(50_000_001)
+        if len(content) > 50_000_000:
+            raise ValueError("SEC response exceeds 50 MB")
         return content
 
     @staticmethod
@@ -321,8 +490,8 @@ async def _default_engine() -> AgenticThesisEngine:
                 DisclosureDocument(
                     document_id=accession,
                     thesis_id=thesis.thesis_id,
-                    accession=accession,
-                    filing_date=filing_date,
+                    source_id=accession,
+                    source_date=filing_date,
                     source_url=source_url,
                     content=documents[accession],
                 )
@@ -334,6 +503,7 @@ def create_app(
     engine: AgenticThesisEngine | AgenticThesisWorkflow | None = None,
     *,
     sec_client: Any = None,
+    ir_client: Any = None,
     monitor_interval: float | None = None,
     collection_interval: float = 86_400,
 ) -> FastAPI:
@@ -344,18 +514,19 @@ def create_app(
             user_agent = os.getenv("AGENTIC_THESIS_SEC_USER_AGENT")
             if app.state.sec_client is None and user_agent:
                 app.state.sec_client = SecEdgarClient(user_agent)
+            if app.state.ir_client is None:
+                app.state.ir_client = OfficialIrClient(
+                    user_agent or "AgenticThesis IR monitor"
+                )
             if app.state.monitor_interval is None:
                 app.state.monitor_interval = float(
                     os.getenv("AGENTIC_THESIS_SEC_POLL_SECONDS", "3600")
                 )
         for run in await app.state.engine.list_runs():
             if run.status == RunStatus.RUNNING:
-                app.state.run_conditions[run.run_id] = asyncio.Condition()
-                app.state.run_tasks[run.run_id] = asyncio.create_task(
-                    execute_run(run.run_id)
-                )
+                await schedule_run(run.run_id)
         if app.state.monitor_interval is not None:
-            app.state.monitor_task = asyncio.create_task(poll_sec_monitors())
+            app.state.monitor_task = asyncio.create_task(poll_monitors())
         yield
         if app.state.monitor_task is not None:
             app.state.monitor_task.cancel()
@@ -367,7 +538,7 @@ def create_app(
         if engine is None:
             await app.state.engine.close()
 
-    app = FastAPI(title="AgenticThesis", version="1.0.0a1", lifespan=lifespan)
+    app = FastAPI(title="AgenticThesis", version="1.1.0a1", lifespan=lifespan)
     if engine is not None:
         app.state.engine = (
             engine
@@ -377,9 +548,12 @@ def create_app(
     app.state.run_tasks = {}
     app.state.run_conditions = {}
     app.state.sec_client = sec_client
+    app.state.ir_client = ir_client
     app.state.monitor_interval = monitor_interval
     app.state.collection_interval = collection_interval
     app.state.monitor_task = None
+    # ponytail: process-local locks match the in-process scheduler; use DB leases only for multi-process serving.
+    app.state.sync_locks = {}
 
     async def publish(run_id: str, event: dict) -> None:
         event = jsonable_encoder(event)
@@ -462,9 +636,20 @@ def create_app(
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+        await schedule_run(run_id)
+
+    async def schedule_run(run_id: str) -> bool:
+        existing = app.state.run_tasks.get(run_id)
+        if existing and not existing.done():
+            return False
+        run = await app.state.engine.get_run(run_id)
+        if run is None or run.status != RunStatus.RUNNING:
+            return False
+        app.state.run_conditions[run_id] = asyncio.Condition()
         app.state.run_tasks[run_id] = asyncio.create_task(
             execute_run(run_id)
         )
+        return True
 
     @app.get("/", response_class=FileResponse)
     async def product_page() -> FileResponse:
@@ -510,7 +695,22 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
-    async def sync_sec_monitor(thesis_id: str) -> dict:
+    @app.get("/ir-monitors")
+    async def list_ir_monitors() -> list[IrMonitor]:
+        return await app.state.engine.list_ir_monitors()
+
+    @app.put("/theses/{thesis_id}/ir-monitor")
+    async def configure_ir_monitor(
+        thesis_id: str, request: IrMonitorInput
+    ) -> IrMonitor:
+        try:
+            return await app.state.engine.configure_ir_monitor(
+                thesis_id, request.urls, request.enabled
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    async def _sync_sec_monitor(thesis_id: str) -> dict:
         monitor = await app.state.engine.get_sec_monitor(thesis_id)
         if monitor is None:
             raise HTTPException(status_code=404, detail="SEC monitor not configured")
@@ -528,7 +728,10 @@ def create_app(
             filings = await app.state.sec_client.filings(
                 monitor.cik, monitor.last_accession
             )
-            matching = [item for item in filings if item["form"] in monitor.forms]
+            matching = [
+                item for item in filings
+                if _sec_form_selected(item["form"], monitor.forms)
+            ]
             if monitor.last_accession:
                 accessions = [item["accession"] for item in matching]
                 candidates = (
@@ -547,6 +750,21 @@ def create_app(
                     f"sec:{filing['accession']}:"
                     + hashlib.sha256(thesis_id.encode()).hexdigest()[:12]
                 )
+                metadata = {
+                    "cik": monitor.cik,
+                    "primary_document": filing["primary_document"],
+                    "report_date": filing.get("report_date") or "",
+                    "items": filing.get("items") or "",
+                    **_sec_form_metadata(filing["form"]),
+                }
+                amended_event_id = None
+                if metadata["is_amendment"] == "true":
+                    amended_event_id = await app.state.engine.find_amended_event(
+                        thesis_id,
+                        source="sec-edgar",
+                        base_form=metadata["base_form"],
+                        report_date=metadata["report_date"],
+                    )
                 event = DisclosureEvent(
                     event_id=event_id,
                     thesis_id=thesis_id,
@@ -554,19 +772,15 @@ def create_app(
                     authority=SourceAuthority.REGULATOR,
                     event_type=f"sec:{filing['form']}",
                     external_id=filing["accession"],
-                    filing_date=filing["filing_date"],
+                    event_date=filing["filing_date"],
                     published_at=filing.get("filing_date"),
                     accepted_at=filing.get("accepted_at") or None,
-                    metadata={
-                        "cik": monitor.cik,
-                        "primary_document": filing["primary_document"],
-                        "report_date": filing.get("report_date") or "",
-                        "items": filing.get("items") or "",
-                        **_sec_form_metadata(filing["form"]),
-                    },
+                    amended_event_id=amended_event_id,
+                    metadata=metadata,
                 )
-                result = await app.state.engine.ingest_event(event, artifacts)
-                await app.state.engine.record_artifact_failures(
+                result = await app.state.engine.process_event(
+                    event,
+                    artifacts,
                     [
                         ArtifactFetchFailure(
                             event_id=event_id,
@@ -574,38 +788,13 @@ def create_app(
                             **failure,
                         )
                         for failure in failures
-                    ]
+                    ],
+                    run_id=f"sec-{thesis_id}-{filing['accession']}",
                 )
                 if result.event_created:
                     imported += 1
-                run_id = (
-                    f"sec-{thesis_id}-{filing['accession']}"
-                    if result.disclosure_created and result.document_id
-                    else None
-                )
-                policy_version = "sec-configured-form-v1"
-                await app.state.engine.put_radar_entry(
-                    RadarEntry(
-                        radar_id="radar:" + hashlib.sha256(
-                            f"{thesis_id}:{event_id}:{policy_version}".encode()
-                        ).hexdigest()[:24],
-                        thesis_id=thesis_id,
-                        event_id=event_id,
-                        outcome=(
-                            RadarOutcome.NEEDS_REVIEW
-                            if run_id else RadarOutcome.DIGEST
-                        ),
-                        reason_codes=[
-                            "configured_sec_form" if run_id else "no_parseable_evidence"
-                        ],
-                        run_id=run_id,
-                        policy_version=policy_version,
-                        created_at=datetime.now(timezone.utc).isoformat(),
-                    )
-                )
-                if result.disclosure_created and result.document_id:
-                    await launch_run(run_id, thesis_id, result.document_id)
-                    run_ids.append(run_id)
+                if result.run_id and await schedule_run(result.run_id):
+                    run_ids.append(result.run_id)
             cursor_after = matching[0]["accession"] if matching else monitor.last_accession
             await app.state.engine.record_sec_sync(
                 thesis_id,
@@ -655,7 +844,12 @@ def create_app(
             "run_ids": run_ids,
         }
 
-    async def poll_sec_monitors() -> None:
+    async def sync_sec_monitor(thesis_id: str) -> dict:
+        lock = app.state.sync_locks.setdefault(f"sec:{thesis_id}", asyncio.Lock())
+        async with lock:
+            return await _sync_sec_monitor(thesis_id)
+
+    async def poll_monitors() -> None:
         while True:
             for monitor in await app.state.engine.list_sec_monitors():
                 if not monitor.enabled:
@@ -672,11 +866,229 @@ def create_app(
                     await sync_sec_monitor(monitor.thesis_id)
                 except HTTPException:
                     pass
+            for monitor in await app.state.engine.list_ir_monitors():
+                if not monitor.enabled:
+                    continue
+                if monitor.last_checked_at:
+                    checked_at = datetime.fromisoformat(
+                        monitor.last_checked_at
+                    ).replace(tzinfo=timezone.utc)
+                    if (
+                        datetime.now(timezone.utc) - checked_at
+                    ).total_seconds() < app.state.collection_interval:
+                        continue
+                try:
+                    await sync_ir_monitor(monitor.thesis_id)
+                except HTTPException:
+                    pass
             await asyncio.sleep(app.state.monitor_interval)
+
+    async def sync_ir_monitor(thesis_id: str) -> dict:
+        monitor = await app.state.engine.get_ir_monitor(thesis_id)
+        if monitor is None:
+            raise HTTPException(status_code=404, detail="IR monitor not configured")
+        if not monitor.enabled:
+            raise HTTPException(status_code=409, detail="IR monitor is paused")
+        if app.state.ir_client is None:
+            raise HTTPException(status_code=503, detail="IR client is not configured")
+
+        lock = app.state.sync_locks.setdefault(f"ir:{thesis_id}", asyncio.Lock())
+        async with lock:
+            attempt_id = str(uuid.uuid4())
+            started_at = datetime.now(timezone.utc).isoformat()
+            observed_at = started_at
+            event_date = started_at[:10]
+            imported = 0
+            run_ids: list[str] = []
+            errors: list[str] = []
+            try:
+                for root_url in monitor.urls:
+                    try:
+                        page_content, page_type = await app.state.ir_client.read(root_url)
+                    except Exception as exc:
+                        errors.append(f"{root_url}: {exc}")
+                        continue
+                    discovery = ArtifactInput(
+                        role="discovery_page",
+                        source_url=root_url,
+                        media_type=page_type,
+                        content=page_content,
+                    )
+                    previous = await app.state.engine.get_ir_resources(
+                        thesis_id, root_url
+                    )
+                    candidates = app.state.ir_client.discover(
+                        root_url, page_content, page_type
+                    )
+                    candidate_urls = {url for url, _, _ in candidates}
+                    observed_resources: list[tuple[str, str, str]] = []
+
+                    for resource_url, title, published in candidates:
+                        try:
+                            if resource_url == root_url:
+                                content, media_type = page_content, page_type
+                            else:
+                                content, media_type = await app.state.ir_client.read(
+                                    resource_url
+                                )
+                        except Exception as exc:
+                            old = previous.get(resource_url)
+                            if old and old["present"]:
+                                observed_resources.append(
+                                    (resource_url, old["content_hash"], old["media_type"])
+                                )
+                            failure_event_id = "ir:" + hashlib.sha256(
+                                f"{thesis_id}:{resource_url}:failure:{event_date}".encode()
+                            ).hexdigest()[:24]
+                            await app.state.engine.process_event(
+                                DisclosureEvent(
+                                    event_id=failure_event_id,
+                                    thesis_id=thesis_id,
+                                    source="issuer-ir",
+                                    authority=SourceAuthority.ISSUER,
+                                    event_type="ir:fetch_failure",
+                                    external_id=_ir_external_id(
+                                        resource_url, f"failure:{event_date}"
+                                    ),
+                                    event_date=event_date,
+                                    metadata={"root_url": root_url, "title": title},
+                                ),
+                                [discovery],
+                                [
+                                    ArtifactFetchFailure(
+                                        event_id=failure_event_id,
+                                        role="official_document",
+                                        source_url=resource_url,
+                                        error=str(exc),
+                                        occurred_at=observed_at,
+                                    )
+                                ],
+                            )
+                            continue
+
+                        digest = hashlib.sha256(content).hexdigest()
+                        observed_resources.append((resource_url, digest, media_type))
+                        old = previous.get(resource_url)
+                        if old and old["present"] and old["content_hash"] == digest:
+                            continue
+                        role = (
+                            "transcript" if "transcript" in f"{title} {resource_url}".lower()
+                            else "presentation" if "presentation" in f"{title} {resource_url}".lower()
+                            else "official_document"
+                        )
+                        resource_date = (
+                            published
+                            if published and len(published) == 10 and published[4] == "-"
+                            else event_date
+                        )
+                        event_id = "ir:" + hashlib.sha256(
+                            f"{thesis_id}:{resource_url}:{digest}".encode()
+                        ).hexdigest()[:24]
+                        result = await app.state.engine.process_event(
+                            DisclosureEvent(
+                                event_id=event_id,
+                                thesis_id=thesis_id,
+                                source="issuer-ir",
+                                authority=SourceAuthority.ISSUER,
+                                event_type=f"ir:{role}",
+                                external_id=_ir_external_id(resource_url, digest),
+                                event_date=resource_date,
+                                published_at=published,
+                                metadata={
+                                    "root_url": root_url,
+                                    "title": title,
+                                    "change": "new" if old is None else "replaced",
+                                },
+                            ),
+                            [
+                                discovery,
+                                ArtifactInput(
+                                    role=role,
+                                    source_url=resource_url,
+                                    media_type=media_type,
+                                    content=content,
+                                ),
+                            ],
+                            run_id=f"ir-{event_id.removeprefix('ir:')}",
+                        )
+                        imported += int(result.event_created)
+                        if result.run_id and await schedule_run(result.run_id):
+                            run_ids.append(result.run_id)
+
+                    for resource_url, old in previous.items():
+                        if not old["present"] or resource_url in candidate_urls:
+                            continue
+                        removal_id = "ir:" + hashlib.sha256(
+                            f"{thesis_id}:{resource_url}:removed:{old['content_hash']}".encode()
+                        ).hexdigest()[:24]
+                        result = await app.state.engine.process_event(
+                            DisclosureEvent(
+                                event_id=removal_id,
+                                thesis_id=thesis_id,
+                                source="issuer-ir",
+                                authority=SourceAuthority.ISSUER,
+                                event_type="ir:link_removed",
+                                external_id=_ir_external_id(
+                                    resource_url, f"removed:{old['content_hash']}"
+                                ),
+                                event_date=event_date,
+                                metadata={
+                                    "root_url": root_url,
+                                    "resource_url": resource_url,
+                                    "change": "link_removed",
+                                },
+                            ),
+                            [discovery],
+                        )
+                        imported += int(result.event_created)
+
+                    await app.state.engine.record_ir_resources(
+                        thesis_id, root_url, observed_resources, observed_at
+                    )
+
+                if errors:
+                    raise RuntimeError("; ".join(errors))
+                await app.state.engine.record_ir_sync(thesis_id, imported)
+                await app.state.engine.record_collection_attempt(
+                    CollectionAttempt(
+                        attempt_id=attempt_id,
+                        thesis_id=thesis_id,
+                        source="issuer-ir",
+                        status=CollectionStatus.SUCCEEDED,
+                        started_at=started_at,
+                        completed_at=datetime.now(timezone.utc).isoformat(),
+                        imported=imported,
+                    )
+                )
+            except Exception as exc:
+                await app.state.engine.record_ir_sync(thesis_id, imported, str(exc))
+                await app.state.engine.record_collection_attempt(
+                    CollectionAttempt(
+                        attempt_id=attempt_id,
+                        thesis_id=thesis_id,
+                        source="issuer-ir",
+                        status=CollectionStatus.FAILED,
+                        started_at=started_at,
+                        completed_at=datetime.now(timezone.utc).isoformat(),
+                        imported=imported,
+                        error=str(exc),
+                    )
+                )
+                raise HTTPException(status_code=502, detail=f"IR sync failed: {exc}") from exc
+            return {
+                "thesis_id": thesis_id,
+                "checked": len(monitor.urls),
+                "imported": imported,
+                "run_ids": run_ids,
+            }
 
     @app.post("/theses/{thesis_id}/sync")
     async def sync_monitor(thesis_id: str) -> dict:
         return await sync_sec_monitor(thesis_id)
+
+    @app.post("/theses/{thesis_id}/ir-sync")
+    async def sync_ir(thesis_id: str) -> dict:
+        return await sync_ir_monitor(thesis_id)
 
     @app.get("/disclosures")
     async def list_disclosures(thesis_id: str) -> list[DisclosureSummary]:
@@ -695,14 +1107,17 @@ def create_app(
 
     @app.get("/artifacts/{artifact_id}")
     async def get_artifact(artifact_id: str) -> Response:
-        artifact = await app.state.engine.get_artifact_content(artifact_id)
-        if artifact is None:
+        content = await app.state.engine.get_artifact_content(artifact_id)
+        if content is None:
             raise HTTPException(status_code=404, detail="artifact not found")
-        content, media_type = artifact
         return Response(
             content=content,
-            media_type=media_type,
-            headers={"ETag": f'"{artifact_id.removeprefix("sha256:")}"'},
+            media_type="application/octet-stream",
+            headers={
+                "Content-Disposition": f'attachment; filename="{artifact_id.removeprefix("sha256:")}"',
+                "ETag": f'"{artifact_id.removeprefix("sha256:")}"',
+                "X-Content-Type-Options": "nosniff",
+            },
         )
 
     @app.get("/events/{event_id}/failures")

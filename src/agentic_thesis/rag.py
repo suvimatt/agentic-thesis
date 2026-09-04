@@ -235,8 +235,8 @@ def html_to_text(document: str) -> str:
 def chunk_filing(
     document: str,
     *,
-    accession: str,
-    filing_date: str,
+    source_id: str,
+    source_date: str,
     source_url: str = "",
     artifact_id: str = "",
     offset: int = 0,
@@ -265,13 +265,13 @@ def chunk_filing(
             start = cursor
             end = start + len(value)
             digest = hashlib.sha256(
-                f"{accession}:{block_index}:{kind}:{value}".encode()
+                f"{source_id}:{block_index}:{kind}:{value}".encode()
             ).hexdigest()[:16]
             spans.append(
                 (
                     current_section,
                     CitationSpan(
-                        span_id=f"{accession}:s:{digest}",
+                        span_id=f"{source_id}:s:{digest}",
                         kind=kind,
                         text=value,
                         start_char=start,
@@ -292,13 +292,13 @@ def chunk_filing(
             return
         body = "\n".join(span.text for span in window)
         digest = hashlib.sha256(
-            f"{accession}:{window[0].span_id}:{window[-1].span_id}".encode()
+            f"{source_id}:{window[0].span_id}:{window[-1].span_id}".encode()
         ).hexdigest()[:16]
         chunks.append(
             DisclosureChunk(
-                chunk_id=f"{accession}:{digest}",
-                accession=accession,
-                filing_date=filing_date,
+                chunk_id=f"{source_id}:{digest}",
+                source_id=source_id,
+                source_date=source_date,
                 section=window_section,
                 text=body,
                 start_char=window[0].start_char,
@@ -772,8 +772,8 @@ def build_evidence_pack(
             EvidenceItem(
                 evidence_id=evidence_id,
                 chunk_id=hit.chunk.chunk_id,
-                accession=hit.chunk.accession,
-                filing_date=hit.chunk.filing_date,
+                source_id=hit.chunk.source_id,
+                source_date=hit.chunk.source_date,
                 section=hit.chunk.section,
                 kind=span.kind,
                 source_url=hit.chunk.source_url,

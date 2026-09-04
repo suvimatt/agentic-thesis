@@ -61,7 +61,7 @@
     <div>
       <div class="eyebrow">A daily check on your company thesis</div>
       <h1>Track why you own a company,<br>not every headline.</h1>
-      <p class="lede">Write down why you invested and what would prove you wrong. AgenticThesis checks official filings, shows which reasons changed, and links every conclusion to the source. You decide what to save.</p>
+      <p class="lede">Write down why you invested and what would prove you wrong. AgenticThesis checks official disclosures, shows which reasons changed, and links every conclusion to the source. You decide what to save.</p>
     </div>
     <div>
       <label for="thesis">Company thesis</label><select id="thesis"></select>
@@ -97,7 +97,9 @@
 
     <section class="card span">
       <div class="row between"><h2>Companies and source documents</h2><span class="muted">Saved locally</span></div>
-      <div id="disclosures" class="empty">Choose a company to see its saved filings.</div>
+      <div id="disclosures" class="empty">Choose a company to see its saved source documents.</div>
+      <h3>Radar Inbox</h3>
+      <div id="radar" class="empty">No source events have been routed yet.</div>
       <details open>
         <summary>Daily SEC filing check</summary>
         <form id="monitor-form">
@@ -108,6 +110,15 @@
           </div>
           <div class="row"><button type="submit">Save daily check</button><button id="monitor-sync" type="button" class="secondary" disabled>Check SEC now</button></div>
           <div id="monitor-status" class="muted">Daily checking is not set up for this company.</div>
+        </form>
+      </details>
+      <details>
+        <summary>Official investor-relations pages</summary>
+        <form id="ir-monitor-form">
+          <label>Issuer-owned HTTPS URLs<textarea id="ir-monitor-urls" required placeholder="https://company.example/investors"></textarea></label>
+          <label class="row"><input id="ir-monitor-enabled" type="checkbox" checked> Check daily</label>
+          <div class="row"><button type="submit">Save IR pages</button><button id="ir-monitor-sync" type="button" class="secondary" disabled>Check IR now</button></div>
+          <div id="ir-monitor-status" class="muted">Official IR monitoring is not set up for this company.</div>
         </form>
       </details>
       <details>
@@ -127,13 +138,13 @@
         </form>
       </details>
       <details>
-        <summary>Add a company filing manually</summary>
+        <summary>Add a source document manually</summary>
         <form id="disclosure-form">
           <label>HTML or text file<input id="disclosure-file" type="file" accept=".html,.htm,.txt,text/html,text/plain" required></label>
-          <label>Accession or source ID<input id="accession" required></label>
-          <label>Filing date<input id="filing-date" type="date" required></label>
+          <label>Source ID<input id="source-id" required></label>
+          <label>Source date<input id="source-date" type="date" required></label>
           <label>Source URL<input id="source-url" type="url"></label>
-          <button type="submit">Save filing</button>
+          <button type="submit">Save source document</button>
         </form>
       </details>
     </section>
@@ -226,7 +237,7 @@
     }).join('');
     $('evidence').className = '';
     $('evidence').innerHTML = state.evidence_packs.flatMap(pack => pack.items.map(item =>
-      `<article class="evidence"><div class="row between"><strong>${escapeHtml(pack.claim_id)}</strong><span class="muted">${escapeHtml(item.filing_date)} · ${escapeHtml(item.section)} · ${escapeHtml(evidenceKindLabels[item.kind] || item.kind)}</span></div><blockquote>${escapeHtml(item.quote)}</blockquote><div class="row between"><code>${escapeHtml(item.evidence_id)}</code>${item.source_url ? `<a href="${escapeHtml(item.source_url)}" target="_blank" rel="noreferrer">Read original filing ↗</a>` : ''}</div></article>`
+      `<article class="evidence"><div class="row between"><strong>${escapeHtml(pack.claim_id)}</strong><span class="muted">${escapeHtml(item.source_date)} · ${escapeHtml(item.section)} · ${escapeHtml(evidenceKindLabels[item.kind] || item.kind)}</span></div><blockquote>${escapeHtml(item.quote)}</blockquote><div class="row between"><code>${escapeHtml(item.evidence_id)}</code>${item.source_url ? `<a href="${escapeHtml(item.source_url)}" target="_blank" rel="noreferrer">Read original source ↗</a>` : ''}</div></article>`
     )).join('');
     return state;
   }
@@ -261,10 +272,10 @@
     );
     $('disclosures').className = disclosures.length ? '' : 'empty';
     $('disclosures').innerHTML = disclosures.length
-      ? disclosures.map(item => `<article class="claim"><div class="row between"><strong>${escapeHtml(item.accession)}</strong><span class="muted">${escapeHtml(item.filing_date)}</span></div><div class="muted">${escapeHtml(item.document_id)}</div></article>`).join('')
-      : 'No company filings are saved yet.';
+      ? disclosures.map(item => `<article class="claim"><div class="row between"><strong>${escapeHtml(item.source_id)}</strong><span class="muted">${escapeHtml(item.source_date)}</span></div><div class="muted">${escapeHtml(item.document_id)}</div></article>`).join('')
+      : 'No source documents are saved yet.';
     $('disclosure').innerHTML = disclosures.map(item =>
-      `<option value="${escapeHtml(item.document_id)}">${escapeHtml(item.filing_date)} · ${escapeHtml(item.accession)}</option>`
+      `<option value="${escapeHtml(item.document_id)}">${escapeHtml(item.source_date)} · ${escapeHtml(item.source_id)}</option>`
     ).join('');
     $('start').disabled = !disclosures.length;
   }
@@ -293,6 +304,40 @@
     $('monitor-status').textContent = result;
   }
 
+  async function loadIrMonitor() {
+    const thesisId = $('thesis').value;
+    if (!thesisId) return;
+    const monitors = await readResponse(await fetch('/ir-monitors'));
+    const monitor = monitors.find(item => item.thesis_id === thesisId);
+    $('ir-monitor-sync').disabled = !monitor;
+    if (!monitor) {
+      $('ir-monitor-urls').value = '';
+      $('ir-monitor-enabled').checked = true;
+      $('ir-monitor-status').textContent = 'Official IR monitoring is not set up for this company.';
+      return;
+    }
+    $('ir-monitor-urls').value = monitor.urls.join('\n');
+    $('ir-monitor-enabled').checked = monitor.enabled;
+    $('ir-monitor-status').textContent = monitor.last_error
+      ? `Last check failed · ${monitor.last_error}`
+      : monitor.last_checked_at
+        ? `Last successful check ${monitor.last_checked_at} · ${monitor.last_imported} changed event(s)`
+        : 'Configured. Waiting for the first daily check.';
+  }
+
+  async function loadRadar() {
+    const thesisId = $('thesis').value;
+    if (!thesisId) return;
+    const entries = await readResponse(await fetch(`/radar?thesis_id=${encodeURIComponent(thesisId)}`));
+    $('radar').className = entries.length ? '' : 'empty';
+    $('radar').innerHTML = entries.length
+      ? entries.map(item => `<article class="claim row between"><div><strong>${escapeHtml(item.outcome.replaceAll('_', ' '))}</strong><div class="muted">${escapeHtml(item.reason_codes.join(', '))} · ${escapeHtml(item.event_id)}</div></div>${item.run_id ? `<button class="secondary radar-run" data-run-id="${escapeHtml(item.run_id)}">Open review</button>` : ''}</article>`).join('')
+      : 'No source events have been routed yet.';
+    document.querySelectorAll('.radar-run').forEach(button =>
+      button.addEventListener('click', () => openRun(button.dataset.runId))
+    );
+  }
+
   async function loadTheses(preferredId) {
     const theses = await readResponse(await fetch('/theses'));
     $('thesis').innerHTML = theses.map(item =>
@@ -302,7 +347,7 @@
       $('thesis').value = preferredId;
     }
     $('start').disabled = true;
-    if (theses.length) await Promise.all([loadDisclosures(), loadMonitor()]);
+    if (theses.length) await Promise.all([loadDisclosures(), loadMonitor(), loadIrMonitor(), loadRadar()]);
   }
 
   function connectEvents() {
@@ -423,7 +468,7 @@
   }
 
   $('start').addEventListener('click', start);
-  $('thesis').addEventListener('change', () => Promise.all([loadDisclosures(), loadMonitor()]));
+  $('thesis').addEventListener('change', () => Promise.all([loadDisclosures(), loadMonitor(), loadIrMonitor(), loadRadar()]));
   $('approve').addEventListener('click', () => review('approve'));
   $('reject').addEventListener('click', () => review('reject'));
   $('add-thesis-claim').addEventListener('click', () => {
@@ -462,15 +507,15 @@
       const thesisId = $('thesis').value;
       const file = $('disclosure-file').files[0];
       if (!thesisId || !file) throw new Error('Choose a company and file first.');
-      const accession = $('accession').value.trim();
+      const sourceId = $('source-id').value.trim();
       await readResponse(await fetch('/disclosures', {
         method:'POST',
         headers:{'content-type':'application/json'},
         body:JSON.stringify({
-          document_id:`${thesisId}:${accession}`,
+          document_id:`${thesisId}:${sourceId}`,
           thesis_id:thesisId,
-          accession,
-          filing_date:$('filing-date').value,
+          source_id:sourceId,
+          source_date:$('source-date').value,
           source_url:$('source-url').value.trim(),
           content:await file.text()
         })
@@ -516,8 +561,40 @@
       $('monitor-sync').disabled = false;
     }
   });
+  $('ir-monitor-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    try {
+      const thesisId = $('thesis').value;
+      await readResponse(await fetch(`/theses/${encodeURIComponent(thesisId)}/ir-monitor`, {
+        method:'PUT',
+        headers:{'content-type':'application/json'},
+        body:JSON.stringify({
+          urls:$('ir-monitor-urls').value.split(/\s+/).map(value => value.trim()).filter(Boolean),
+          enabled:$('ir-monitor-enabled').checked
+        })
+      }));
+      await loadIrMonitor();
+    } catch (error) {
+      showError(error.message);
+    }
+  });
+  $('ir-monitor-sync').addEventListener('click', async () => {
+    $('ir-monitor-sync').disabled = true;
+    try {
+      const thesisId = $('thesis').value;
+      const result = await readResponse(await fetch(`/theses/${encodeURIComponent(thesisId)}/ir-sync`, {method:'POST'}));
+      $('ir-monitor-status').textContent = result.imported
+        ? `Imported ${result.imported} changed official event(s).`
+        : 'No changed official IR documents.';
+      await Promise.all([loadDisclosures(), loadRuns(), loadRadar()]);
+    } catch (error) {
+      showError(error.message);
+    } finally {
+      $('ir-monitor-sync').disabled = false;
+    }
+  });
   Promise.all([loadTheses(), loadRuns()]).catch(error => showError(error.message));
-  setInterval(() => Promise.all([loadRuns(), loadMonitor()]).catch(error => showError(error.message)), 30000);
+  setInterval(() => Promise.all([loadRuns(), loadMonitor(), loadIrMonitor(), loadRadar()]).catch(error => showError(error.message)), 30000);
 </script>
 </body>
 </html>

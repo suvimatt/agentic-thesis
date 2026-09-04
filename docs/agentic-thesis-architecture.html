@@ -25,12 +25,12 @@
 </head>
 <body>
   <main class="frame">
-    <p class="eyebrow">Architecture · AgenticThesis v1.0 alpha.1</p>
+    <p class="eyebrow">Architecture · AgenticThesis v1.1 alpha.1</p>
     <h1>From an authoritative source event to an auditable thesis revision</h1>
 
     <svg viewBox="0 0 1280 760" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="agentic-thesis-architecture-title agentic-thesis-architecture-desc">
-      <title id="agentic-thesis-architecture-title">AgenticThesis v1.0 alpha system architecture</title>
-      <desc id="agentic-thesis-architecture-desc">Architecture showing an SEC event preserved as immutable source artifacts, routed through a Radar decision, transformed into exact evidence, reviewed by a human, and committed as an auditable thesis revision.</desc>
+      <title id="agentic-thesis-architecture-title">AgenticThesis v1.1 alpha system architecture</title>
+      <desc id="agentic-thesis-architecture-desc">Architecture showing an authoritative SEC or issuer IR event preserved as immutable source artifacts, routed through a Radar decision, transformed into exact evidence, reviewed by a human, and committed as an auditable thesis revision.</desc>
       <defs>
         <style>@import url('https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500;600&amp;display=swap');</style>
         <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#667069"/></marker>
@@ -71,7 +71,7 @@
       <rect x="220" y="204" width="72" height="12" rx="2" fill="#f6f8f4"/>
       <text x="256" y="212" fill="#2e5aa8" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing=".06em">FETCH + HASH</text>
       <rect x="432" y="208" width="72" height="12" rx="2" fill="#f6f8f4"/>
-      <text x="468" y="216" fill="#667069" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing=".06em">BOUND FILING</text>
+      <text x="468" y="216" fill="#667069" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing=".06em">BOUND EVENT</text>
       <rect x="1168" y="200" width="80" height="12" rx="2" fill="#f6f8f4"/>
       <text x="1208" y="208" fill="#667069" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing=".06em">EVENT + ARTIFACT</text>
       <rect x="248" y="304" width="64" height="12" rx="2" fill="#f6f8f4"/>
@@ -92,17 +92,17 @@
       <rect x="40" y="88" width="240" height="80" rx="6" fill="rgba(23,32,25,.03)" stroke="rgba(23,32,25,.30)" stroke-width="1"/>
       <rect x="52" y="100" width="32" height="12" rx="2" fill="transparent" stroke="rgba(23,32,25,.30)" stroke-width=".8"/>
       <text x="68" y="108" fill="#667069" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">DATA</text>
-      <text x="160" y="132" fill="#172019" font-size="12" font-weight="600" font-family="ui-sans-serif,system-ui,sans-serif" text-anchor="middle">SEC Filing Events</text>
-      <text x="160" y="152" fill="#667069" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">recent + history · CIK + accession</text>
+      <text x="160" y="132" fill="#172019" font-size="12" font-weight="600" font-family="ui-sans-serif,system-ui,sans-serif" text-anchor="middle">Official Source Events</text>
+      <text x="160" y="152" fill="#667069" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">SEC · issuer IR · feeds + PDFs</text>
 
       <!-- Node 2: Collection -->
       <rect x="320" y="88" width="240" height="80" rx="6" fill="#f6f8f4"/>
       <rect x="320" y="88" width="240" height="80" rx="6" fill="#ffffff" stroke="#172019" stroke-width="1"/>
       <rect x="332" y="100" width="32" height="12" rx="2" fill="transparent" stroke="rgba(23,32,25,.40)" stroke-width=".8"/>
       <text x="348" y="108" fill="#172019" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">SYNC</text>
-      <text x="440" y="128" fill="#172019" font-size="12" font-weight="600" font-family="ui-sans-serif,system-ui,sans-serif" text-anchor="middle">Evidence Ingestion + Radar</text>
-      <text x="440" y="148" fill="#667069" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">index · primary · exhibits · immutable bytes</text>
-      <text x="440" y="160" fill="#667069" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">parse / failure · needs_review / digest</text>
+      <text x="440" y="128" fill="#172019" font-size="12" font-weight="600" font-family="ui-sans-serif,system-ui,sans-serif" text-anchor="middle">Atomic Ingestion + Radar</text>
+      <text x="440" y="148" fill="#667069" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">HTML · XML · native PDF · bounded OCR</text>
+      <text x="440" y="160" fill="#667069" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">claim + falsifier · needs_review / digest</text>
 
       <!-- Node 3: Product -->
       <rect x="40" y="280" width="200" height="96" rx="6" fill="#f6f8f4"/>

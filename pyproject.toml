@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agentic-thesis"
-version = "1.0.0a1"
-description = "An open-source AI agent that tests investment theses against new company filings."
+version = "1.1.0a1"
+description = "An open-source AI agent that tests investment theses against new company disclosures."
 readme = "README.md"
 license = "AGPL-3.0-only"
 license-files = ["LICENSE"]
@@ -22,6 +22,7 @@ dependencies = [
   "langgraph>=0.6,<2",
   "langgraph-checkpoint-sqlite>=2,<4",
   "openai>=1.100,<2",
+  "pypdf>=6,<7",
   "pydantic>=2.11,<3",
   "python-dotenv>=1.1,<2",
   "qdrant-client>=1.15,<2",

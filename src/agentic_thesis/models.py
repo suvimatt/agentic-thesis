@@ -31,6 +31,7 @@ class SourceAuthority(StrEnum):
 class ParseStatus(StrEnum):
     PARSED = "parsed"
     RETAINED = "retained"
+    NEEDS_OCR = "needs_ocr"
     UNSUPPORTED = "unsupported"
     FAILED = "failed"
 
@@ -72,8 +73,8 @@ class CitationSpan(BaseModel):
 
 class DisclosureChunk(BaseModel):
     chunk_id: str
-    accession: str
-    filing_date: str
+    source_id: str
+    source_date: str
     section: str
     text: str
     start_char: int
@@ -87,8 +88,8 @@ class DisclosureChunk(BaseModel):
 class DisclosureDocument(BaseModel):
     document_id: str = Field(min_length=1, max_length=200)
     thesis_id: str = Field(min_length=1, max_length=200)
-    accession: str = Field(min_length=1, max_length=200)
-    filing_date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+    source_id: str = Field(min_length=1, max_length=300)
+    source_date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
     source_url: str = ""
     content: str = Field(min_length=1, max_length=10_000_000)
     event_id: str | None = None
@@ -98,8 +99,8 @@ class DisclosureDocument(BaseModel):
 class DisclosureSummary(BaseModel):
     document_id: str
     thesis_id: str
-    accession: str
-    filing_date: str
+    source_id: str
+    source_date: str
     source_url: str = ""
     event_id: str | None = None
 
@@ -111,7 +112,7 @@ class DisclosureEvent(BaseModel):
     authority: SourceAuthority
     event_type: str = Field(min_length=1, max_length=100)
     external_id: str = Field(min_length=1, max_length=300)
-    filing_date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+    event_date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
     published_at: str | None = None
     accepted_at: str | None = None
     amended_event_id: str | None = None
@@ -126,7 +127,7 @@ class ArtifactInput(BaseModel):
         max_length=200,
         pattern=r"^[A-Za-z0-9!#$&^_.+-]+/[A-Za-z0-9!#$&^_.+-]+(?:\s*;[^\r\n]*)?$",
     )
-    content: bytes = Field(min_length=1, max_length=10_000_000, repr=False)
+    content: bytes = Field(min_length=1, max_length=50_000_000, repr=False)
 
 
 class SourceArtifact(BaseModel):
@@ -159,6 +160,8 @@ class IngestionResult(BaseModel):
     chunk_count: int
     event_created: bool
     disclosure_created: bool
+    radar_outcome: RadarOutcome | None = None
+    run_id: str | None = None
 
 
 class CollectionAttempt(BaseModel):
@@ -190,8 +193,8 @@ class RadarEntry(BaseModel):
 class EvidenceItem(BaseModel):
     evidence_id: str
     chunk_id: str
-    accession: str
-    filing_date: str
+    source_id: str
+    source_date: str
     section: str
     kind: Literal["sentence", "list_item", "table_row"]
     source_url: str
@@ -270,6 +273,15 @@ class SecMonitor(BaseModel):
     forms: list[str]
     enabled: bool
     last_accession: str | None = None
+    last_checked_at: str | None = None
+    last_error: str | None = None
+    last_imported: int = 0
+
+
+class IrMonitor(BaseModel):
+    thesis_id: str
+    urls: list[str]
+    enabled: bool
     last_checked_at: str | None = None
     last_error: str | None = None
     last_imported: int = 0

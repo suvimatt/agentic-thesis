@@ -13,9 +13,13 @@
   <a href="https://github.com/suvimatt/agentic-thesis/stargazers"><img src="https://img.shields.io/github/stars/suvimatt/agentic-thesis?style=social" alt="GitHub stars"></a>
 </p>
 
-<h2 align="center">让 AI 用证据守护并持续版本化你的投资 Thesis</h2>
+<h2 align="center">让每一份新的公司报告，都来挑战你的投资 Thesis</h2>
 
-AgenticThesis 是一个开源、stateful 的 Python engine，用来判断公司新披露如何支持、削弱或推翻已有投资 Thesis。原始证据、待确认变更、版本历史和可恢复 workflow state 都由应用自己掌握。
+AgenticThesis 是一个开源的 Agentic Thesis Intelligence 系统，服务于愿意说清楚“为什么持有或关注一家公司，以及什么事实会证明自己错了”的投资者。无论你是靠自己学习投资，还是有专业金融背景，重要的都不是身份，而是你关心股票背后的公司生意，也愿意在事实变化时重新检查自己的判断。
+
+它持续读取公司的正式报告，把新证据与你写下的理由和“什么情况说明它错了”逐条对照，生成带原文引用的 Thesis 变更建议。只有经过 Human Review，这次修改才会写入可追溯的 Thesis 版本历史。
+
+> AgenticThesis 不只告诉你公司发生了什么；它说明新证据会怎样改变你的 Thesis，并要求你亲自批准这次改变。
 
 > **当前状态：Alpha。** 1.0 之前 public interface 可能变更。
 
@@ -24,32 +28,30 @@ AgenticThesis 是一个开源、stateful 的 Python engine，用来判断公司�
 - `agentic-thesis serve` 使用 SQLite 和 embedded Qdrant 运行 self-host 应用；
 - `AgenticThesisEngine` 是其他 Python 应用使用的受支持 interface。
 
-v0.9 中，每个 run 仍然只把一份已保存的 disclosure 绑定到一个 Thesis 版本。金融财报现在会解析成保留结构的检索窗口，而 citation 始终是完整、精确的句子、列表项或表格行；系统也会检索投资者为每条 claim 写下的反证条件。
-
-对投资者来说，结果仍然很简单：长期记住自己为什么投资，并在公司出现新事实时检查原来的理由是否还成立。
+v0.9 不再每隔固定数量的 token 把报告切一刀，而是识别报告里的标题、段落、列表和表格。检索时保留足够的上下文，最终展示给人的 citation 则始终是一条完整、精确的句子、列表项或表格行。系统会同时搜索你保存的理由，以及能够证明这条理由错误的事实。
 
 你先在 AgenticThesis 中写下：
 
-- **为什么看好或持有这家公司**；
+- **这家公司的生意有哪些地方，让你愿意继续持有或关注它**；
 - **出现什么事实，就说明这条理由错了**。
 
-系统每天检查一次 SEC 官方披露。有新报告时，它逐条对照你对公司生意的判断，展示支持或反驳它的原文，并请你确认是否更新记录。没有新报告时，就只记录本次检查，不花钱调用 AI 分析。
+系统每天检查一次公司交给美国监管机构的正式报告。有新报告时，它逐条对照你保存的理由，展示相关原文，并请你确认是否更新记录。没有新报告时，就只记录本次检查，不花钱调用 AI 分析。
 
-最终判断始终由你完成。AgenticThesis 不告诉你应该买入、卖出或持有。
+最终判断始终由你完成。AgenticThesis 不替你决定应该买入、卖出还是继续持有。
 
-AgenticThesis 面向已经有明确投资理由、长期跟踪少量公司的自主投资者。它当前只维护**公司基本面 Thesis**；股票估值和最终投资行动是两个独立问题，继续由投资者负责。
+它只研究股票背后的公司生意：公司怎么赚钱、顾客为什么购买、产品怎么样、成本如何、优势在哪里，以及什么地方可能出问题。它不预测股价，也不判断今天的价格是便宜还是贵。
 
 ## 一个具体的 Apple 例子
 
-项目自带的 Apple 案例在一次真实 API 运行中得到以下结果：
+较早一次真实 API 运行得到了下面这组 Apple 结果：
 
-| 你原来写下的公司基本面判断 | 新报告里的事实 | 普通人能看懂的结果 |
+| 你原来的想法 | Apple 报告里的事实 | 结果 |
 | --- | --- | --- |
-| Services 能帮助 Apple 保持较好的整体利润率 | Services 毛利率为 73.9%，Products 为 37.2%，Services 销售额增长 13% | **仍然成立** |
-| 大中华区仍是有韧性的需求来源 | 大中华区销售额下降 8%，主要因为 iPhone 和 iPad 销售下降 | **可能已经不成立** |
-| Apple 能处理零部件供应集中的风险 | Apple 仍依赖部分单一或有限供应商，但没有证据表明当前已发生重大生产中断 | **理由被削弱** |
+| Apple 的服务业务能让公司从每笔销售中留下更多钱 | 服务业务每收到 100 美元，付完与这些销售直接有关的成本后，还剩 73.90 美元用于支付 Apple 的其他开支；硬件产品还剩 37.20 美元，服务销售额也增长了 13% | **目前看仍然对** |
+| 大中华区的顾客会继续稳定购买 Apple 产品 | 当地销售额下降了 8%，主要因为人们购买的 iPhone 和 iPad 变少 | **现在可能不对了** |
+| 即使某些零件只有很少的供应商，Apple 也能继续生产 | Apple 的一些零件仍然只来自一家或少数几家公司，但报告没有显示生产已经因此停下来 | **需要更谨慎** |
 
-每个结果都能点回 SEC 原文。你没有批准之前，系统不会修改你保存的公司 Thesis。
+每个结果都能点回 Apple 报告里的完整原句。你没有批准之前，系统不会修改你保存的记录。
 
 ## 目录
 
@@ -57,7 +59,7 @@ AgenticThesis 面向已经有明确投资理由、长期跟踪少量公司的自
 - [🚀 快速开始](#-快速开始)
 - [Python Engine Interface](#python-engine-interface)
 - [AgenticThesis 能帮你解决什么](#agenticthesis-能帮你解决什么)
-- [这些术语用普通话怎么理解](#这些术语用普通话怎么理解)
+- [项目里的几个名字](#项目里的几个名字)
 - [运行流程](#运行流程)
 - [系统架构](#系统架构)
 - [已实现能力](#已实现能力)
@@ -102,7 +104,7 @@ AGENTIC_THESIS_SEC_USER_AGENT="AgenticThesis your-email@example.com"
 uvx agentic-thesis==0.9.0 serve
 ```
 
-打开 [http://127.0.0.1:8000](http://127.0.0.1:8000)。首次启动已经准备好一份 Apple 公司 Thesis 和两份公司报告。你的公司 Theses、原始资料、vector index、历史检查、待确认结果和已经批准的更新都会保存在 `~/.agentic-thesis/`，关闭并重新启动后仍可继续使用。
+打开 [http://127.0.0.1:8000](http://127.0.0.1:8000)。首次启动已经准备好一份 Apple 示例和两份公司报告。你保存的理由、原始资料、vector index、历史检查、待确认结果和已经批准的更新都会保存在 `~/.agentic-thesis/`，关闭并重新启动后仍可继续使用。
 
 v0.9 使用新的本地 schema，且有意不迁移早期版本数据。请把已有 data directory 留作备份，并让 v0.9 使用一个新目录：
 
@@ -110,7 +112,7 @@ v0.9 使用新的本地 schema，且有意不迁移早期版本数据。请把�
 uvx agentic-thesis==0.9.0 serve --data-dir ~/.agentic-thesis-v09
 ```
 
-在浏览器中输入公司名称、你为什么看好这门生意、这个理由为什么重要，以及一个能够证明它错了的事实，即可创建新的公司 Thesis，不需要理解 JSON 或内部 schema。
+在浏览器中输入公司名称、为什么持有或关注它的股票、这条理由为什么重要，以及一个能够证明这条理由错误的事实，即可添加新的公司，不需要理解 JSON 或内部 schema。
 
 开发和确定性验证：
 
@@ -163,38 +165,38 @@ await engine.close()
 
 ## AgenticThesis 能帮你解决什么
 
-| 业余投资者常见的问题 | AgenticThesis 的做法 |
+| 常见问题 | AgenticThesis 的做法 |
 | --- | --- |
-| 每天被股价和新闻带着走，慢慢忘了最初为什么投资 | 保存你每个时间点真正相信的理由 |
-| 一份上百页的公司报告，很难逐条对照自己的公司基本面判断 | 自动找到与每条判断最相关的段落 |
-| AI 总结听起来很肯定，但不知道依据在哪里 | 每个结论都校验并展示原文 |
-| 新事实和最终决策混在一起 | 只提出更新建议，等你确认后才保存 |
+| 每天被股价和新闻带着走，慢慢忘了当初为什么买入或继续持有 | 按时间保存你原来的理由 |
+| 一份上百页的公司报告，很难逐条对照自己原来的想法 | 自动找到与每条理由最相关的内容 |
+| AI 的回答听起来很肯定，却可能是编出来的 | 每个结论都校验并展示报告原文 |
+| 新事实和自己的决定混在一起 | 只提出更新建议，等你确认后才保存 |
 | 研究到一半关闭程序，回来又要从头开始 | 保存进度，重新启动后继续 |
 
-这个产品帮助你有纪律地复查判断，不提供交易信号。证据不足或相互矛盾时，它会明确显示 **证据不足**，而不是硬猜答案。
+这个产品帮助你检查自己的想法，不发出行动指令。报告里没有足够信息，或不同事实指向不同方向时，它会明确显示 **信息不足**，而不是硬猜答案。
 
-## 这些术语用普通话怎么理解
+## 项目里的几个名字
 
-代码和后面的工程说明仍会使用精确术语。在产品界面里，可以这样理解：
+代码给几个日常概念起了简短的内部名字：
 
-| 工程术语 | 对投资者的含义 |
+| 内部名字 | 日常含义 |
 | --- | --- |
-| Investment thesis | 你为什么看好或持有一家公司的理由 |
-| Claim | 其中一条对公司生意的具体判断 |
+| Thesis | 你为什么持有或关注一只股票的理由记录 |
+| Claim | 其中一条“这家公司以后还能做好”的具体理由 |
 | Falsifier | 出现什么事实，就说明这条理由错了 |
-| Thesis delta | 新证据带来的一次修改建议 |
-| Human Review | 你亲自看证据，并决定是否保存修改 |
+| Thesis delta | 根据新报告提出的一次修改建议 |
+| Human Review | 你亲自看报告原文，并决定是否保存修改 |
 
 ## 运行流程
 
 ```text
-写下你为什么看好这门生意，以及什么事实会证明自己错了
-→ AgenticThesis 每天检查一次你指定的 SEC 报告
+写下你为什么持有或关注这只股票，以及什么事实会证明每条理由错了
+→ AgenticThesis 每天检查一次你指定的公司正式报告
 → 没有新报告：记录检查并停止
-→ 有新报告：创建只绑定这份 disclosure 的 run，逐条对照它与原来的投资理由
-→ 显示 仍然成立 / 被削弱 / 可能不成立 / 证据不足
+→ 有新报告：逐条对照它与原来保存的理由
+→ 显示 目前看仍然对 / 需要更谨慎 / 现在可能不对了 / 信息不足
 → 每个结果都链接到准确的原文
-→ 等你决定保持原判断，还是保存这次更新
+→ 等你决定保持原记录，还是保存这次更新
 ```
 
 系统内部把这四种结果存为 `supported`、`weakened`、`possibly_invalidated` 和 `unknown`。待确认的更新叫 `ThesisDelta`，持久化的运行记录叫 `ThesisRun`；你批准后，系统会同时创建下一个不可变的 `ThesisSnapshot` 和可查询的 `ThesisRevision`。
@@ -234,7 +236,7 @@ await engine.close()
 - 多个相互隔离的 theses，以及手工 HTML/TXT disclosure 导入；
 - 每个 thesis 一个官方 SEC EDGAR monitor，可选择 filing types，按 accession/content 去重，支持手工 sync 和持久化的每日收集 schedule；
 - 异步 FastAPI、后台任务、有界且带 timeout 的模型调用、停止服务后的 checkpoint 恢复，以及不暴露 chain-of-thought 的实时 LangGraph events；
-- 无前端依赖的产品页面，提供 guided investment-case editor，并支持 disclosure 管理、进度、引用、Context 压缩和 Human Review；
+- 无前端依赖的产品页面，提供 guided company-reason editor，并支持 disclosure 管理、进度、引用、Context 压缩和 Human Review；
 - 可安装的 `agentic-thesis serve` CLI、package sample data 和稳定的用户数据目录。
 
 ## 验证结果
@@ -329,7 +331,7 @@ curl -X POST http://localhost:8000/theses/aapl-primary/sync
 - 自动 ingestion 有意只支持官方 SEC EDGAR submissions，不做新闻、社交媒体或公司 IR 网站爬虫；
 - scheduler 只是一个每小时判断本地 due state、每 24 小时最多自动成功访问 SEC 一次的进程内 `asyncio` loop，不是分布式任务系统或通知服务；
 - Qdrant 以 embedded 模式运行，并把 vectors 持久化到用户数据目录；SQLite 持久化 Workflow 和 Thesis 状态；
-- 没有 portfolio management、valuation、Multi-Agent role、distributed scheduler 或 queue；
+- 不预测股价，不建议应该投入多少钱，也没有 Multi-Agent role、distributed scheduler 或 queue；
 - 检索 gold set 包含 Apple 两份 filing 的 26 条问题；四条 Thesis delta case 已加入 Microsoft，但仍缺少更广的公司覆盖和一份已完成的当前 v0.9 live API 结果；
 - 没有实测 throughput、p50、p95 或 production-readiness 声明。
 

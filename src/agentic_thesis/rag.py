@@ -238,11 +238,14 @@ def chunk_filing(
     accession: str,
     filing_date: str,
     source_url: str = "",
+    artifact_id: str = "",
+    offset: int = 0,
+    page_number: int | None = None,
     max_chars: int = 2_400,
 ) -> list[DisclosureChunk]:
     spans: list[tuple[str, CitationSpan]] = []
     document_is_html = bool(re.search(r"<[A-Za-z!/][^>]*>", document))
-    cursor = 0
+    cursor = offset
     current_section = "Unknown"
     block_index = 0
     for block in _blocks(document):
@@ -257,7 +260,7 @@ def chunk_filing(
         else:
             values = [(block.text, block.kind)]
         for value, kind in values:
-            if cursor:
+            if spans:
                 cursor += 1
             start = cursor
             end = start + len(value)
@@ -273,6 +276,7 @@ def chunk_filing(
                         text=value,
                         start_char=start,
                         end_char=end,
+                        page_number=page_number,
                     ),
                 )
             )
@@ -300,6 +304,8 @@ def chunk_filing(
                 start_char=window[0].start_char,
                 end_char=window[-1].end_char,
                 source_url=source_url,
+                artifact_id=artifact_id,
+                page_number=page_number,
                 citation_spans=list(window),
             )
         )
@@ -771,6 +777,8 @@ def build_evidence_pack(
                 section=hit.chunk.section,
                 kind=span.kind,
                 source_url=hit.chunk.source_url,
+                artifact_id=hit.chunk.artifact_id,
+                page_number=span.page_number or hit.chunk.page_number,
                 start_char=span.start_char,
                 end_char=span.end_char,
                 source_start_char=hit.chunk.start_char,

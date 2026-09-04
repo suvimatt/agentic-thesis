@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agentic-thesis"
-version = "0.9.0"
-description = "An open-source agentic system that challenges investment theses with new company evidence."
+version = "1.0.0a1"
+description = "An open-source AI agent that tests investment theses against new company filings."
 readme = "README.md"
 license = "AGPL-3.0-only"
 license-files = ["LICENSE"]

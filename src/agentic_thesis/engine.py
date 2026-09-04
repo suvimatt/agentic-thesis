@@ -1,16 +1,29 @@
+import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import aclosing
+from datetime import datetime, timezone
+import hashlib
 from pathlib import Path
 from typing import Any
 
 from agentic_thesis.models import (
+    ArtifactFetchFailure,
+    ArtifactInput,
+    CollectionAttempt,
     DisclosureChunk,
     DisclosureDocument,
+    DisclosureEvent,
     DisclosureSummary,
     EvidencePack,
+    IngestionResult,
+    ParseStatus,
+    RadarEntry,
     ReviewDecision,
     RunStatus,
     RunSummary,
     SecMonitor,
+    SourceArtifact,
+    SourceAuthority,
     ThesisDelta,
     ThesisRevision,
     ThesisRun,
@@ -74,21 +87,152 @@ class AgenticThesisEngine:
     async def add_disclosure(self, document: DisclosureDocument) -> int:
         if await self.get_thesis(document.thesis_id) is None:
             raise ValueError("thesis not found")
-        chunks = chunk_filing(
-            document.content,
-            accession=document.accession,
+        event = DisclosureEvent(
+            event_id=document.event_id or document.document_id,
+            thesis_id=document.thesis_id,
+            source="manual",
+            authority=SourceAuthority.USER_SUPPLIED,
+            event_type="manual_disclosure",
+            external_id=document.accession,
             filing_date=document.filing_date,
-            source_url=document.source_url,
         )
-        if not chunks:
+        result = await self._ingest_event(
+            event,
+            [
+                ArtifactInput(
+                    role="manual_document",
+                    source_url=document.source_url or "urn:agentic-thesis:manual",
+                    media_type="text/html",
+                    content=document.content.encode(),
+                )
+            ],
+            document_id=document.document_id,
+        )
+        if not result.chunk_count:
             raise ValueError("disclosure contains no text")
-        if not await self._workflow.add_disclosure(
+        if not result.disclosure_created:
+            raise EngineConflictError("disclosure already exists")
+        return result.chunk_count
+
+    async def ingest_event(
+        self,
+        event: DisclosureEvent,
+        artifacts: list[ArtifactInput],
+    ) -> IngestionResult:
+        if await self.get_thesis(event.thesis_id) is None:
+            raise ValueError("thesis not found")
+        return await self._ingest_event(event, artifacts, document_id=event.event_id)
+
+    async def _ingest_event(
+        self,
+        event: DisclosureEvent,
+        artifacts: list[ArtifactInput],
+        *,
+        document_id: str,
+    ) -> IngestionResult:
+        if not artifacts:
+            raise ValueError("event must contain at least one artifact")
+        retrieved_at = datetime.now(timezone.utc).isoformat()
+        records: list[tuple[SourceArtifact, bytes]] = []
+        chunks: list[DisclosureChunk] = []
+        artifact_ids: list[str] = []
+        primary_content = ""
+        primary_url = ""
+        offset = 0
+        evidence_roles = {
+            "primary_document",
+            "exhibit",
+            "full_submission",
+            "manual_document",
+            "official_document",
+            "presentation",
+            "transcript",
+        }
+        text_media = {"text/html", "text/plain", "application/xhtml+xml", "application/xml", "text/xml"}
+        for item in artifacts:
+            digest = hashlib.sha256(item.content).hexdigest()
+            artifact_id = f"sha256:{digest}"
+            artifact_ids.append(artifact_id)
+            media_type = item.media_type.split(";", 1)[0].strip().lower()
+            parser_name = None
+            parser_version = None
+            parse_status = ParseStatus.RETAINED
+            parse_error = None
+            if item.role in evidence_roles and media_type in text_media:
+                try:
+                    text = item.content.decode("utf-8", errors="replace")
+                    parsed = chunk_filing(
+                        text,
+                        accession=event.external_id,
+                        filing_date=event.filing_date,
+                        source_url=item.source_url,
+                        artifact_id=artifact_id,
+                        offset=offset,
+                    )
+                    if parsed:
+                        chunks.extend(parsed)
+                        offset = max(chunk.end_char for chunk in parsed) + 1
+                        parser_name = "agentic-thesis-structured-text"
+                        parser_version = "1"
+                        parse_status = ParseStatus.PARSED
+                        if item.role == "primary_document" or not primary_content:
+                            primary_content = text
+                            primary_url = item.source_url
+                    else:
+                        parse_status = ParseStatus.FAILED
+                        parse_error = "artifact contains no complete evidence spans"
+                except Exception as exc:
+                    parse_status = ParseStatus.FAILED
+                    parse_error = str(exc)
+            elif item.role in evidence_roles:
+                parse_status = ParseStatus.UNSUPPORTED
+                parse_error = f"unsupported media type: {media_type}"
+            records.append(
+                (
+                    SourceArtifact(
+                        artifact_id=artifact_id,
+                        event_id=event.event_id,
+                        role=item.role,
+                        source_url=item.source_url,
+                        media_type=media_type,
+                        content_hash=digest,
+                        byte_length=len(item.content),
+                        retrieved_at=retrieved_at,
+                        parser_name=parser_name,
+                        parser_version=parser_version,
+                        parse_status=parse_status,
+                        parse_error=parse_error,
+                    ),
+                    item.content,
+                )
+            )
+        document = None
+        if chunks:
+            document = DisclosureDocument(
+                document_id=document_id,
+                thesis_id=event.thesis_id,
+                accession=event.external_id,
+                filing_date=event.filing_date,
+                source_url=primary_url or chunks[0].source_url,
+                content=primary_content or chunks[0].text,
+                event_id=event.event_id,
+                artifact_ids=list(dict.fromkeys(artifact_ids)),
+            )
+        event_created, disclosure_created = await self._workflow.add_disclosure(
             document,
             canonical_text_from_chunks(chunks),
             chunks,
-        ):
-            raise EngineConflictError("disclosure already exists")
-        return len(chunks)
+            event,
+            records,
+        )
+        return IngestionResult(
+            event_id=event.event_id,
+            document_id=document.document_id if document else None,
+            artifact_ids=list(dict.fromkeys(artifact_ids)),
+            chunk_count=len(chunks),
+            event_created=event_created,
+            disclosure_created=disclosure_created,
+        )
 
     async def get_disclosure(
         self, thesis_id: str, document_id: str
@@ -99,6 +243,52 @@ class AgenticThesisEngine:
         return [
             DisclosureSummary.model_validate(item)
             for item in await self._workflow.list_disclosures(thesis_id)
+        ]
+
+    async def get_event(self, event_id: str) -> DisclosureEvent | None:
+        event = await self._workflow.get_event(event_id)
+        return DisclosureEvent.model_validate(event) if event else None
+
+    async def list_artifacts(self, event_id: str) -> list[SourceArtifact]:
+        return [
+            SourceArtifact.model_validate(item)
+            for item in await self._workflow.list_artifacts(event_id)
+        ]
+
+    async def get_artifact_content(self, artifact_id: str) -> tuple[bytes, str] | None:
+        return await self._workflow.get_artifact_content(artifact_id)
+
+    async def record_artifact_failures(
+        self, failures: list[ArtifactFetchFailure]
+    ) -> None:
+        await self._workflow.record_artifact_failures(failures)
+
+    async def list_artifact_failures(
+        self, event_id: str
+    ) -> list[ArtifactFetchFailure]:
+        return [
+            ArtifactFetchFailure.model_validate(item)
+            for item in await self._workflow.list_artifact_failures(event_id)
+        ]
+
+    async def record_collection_attempt(self, attempt: CollectionAttempt) -> None:
+        await self._workflow.record_collection_attempt(attempt)
+
+    async def list_collection_attempts(
+        self, thesis_id: str
+    ) -> list[CollectionAttempt]:
+        return [
+            CollectionAttempt.model_validate(item)
+            for item in await self._workflow.list_collection_attempts(thesis_id)
+        ]
+
+    async def put_radar_entry(self, entry: RadarEntry) -> bool:
+        return await self._workflow.put_radar_entry(entry)
+
+    async def list_radar_entries(self, thesis_id: str) -> list[RadarEntry]:
+        return [
+            RadarEntry.model_validate(item)
+            for item in await self._workflow.list_radar_entries(thesis_id)
         ]
 
     async def start_run(
@@ -135,8 +325,14 @@ class AgenticThesisEngine:
                 updates = self._workflow.stream_start(
                     run_id, record["disclosure_id"], thesis, chunks
                 )
-            async for update in updates:
-                yield update
+            async with aclosing(updates):
+                async for update in updates:
+                    yield update
+        except asyncio.CancelledError as exc:
+            cleanup = [item for item in exc.args if isinstance(item, asyncio.Task)]
+            if cleanup:
+                await asyncio.gather(*cleanup, return_exceptions=True)
+            raise
         except Exception as exc:
             await self._workflow.record_error(run_id, str(exc))
             raise

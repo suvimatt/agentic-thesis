@@ -12,11 +12,16 @@ from langgraph.graph import END, StateGraph
 from langgraph.types import Command, interrupt
 
 from agentic_thesis.models import (
+    ArtifactFetchFailure,
+    CollectionAttempt,
     DisclosureChunk,
     DisclosureDocument,
+    DisclosureEvent,
+    RadarEntry,
     ResearchState,
     ReviewDecision,
     RunStatus,
+    SourceArtifact,
     ThesisDelta,
     ThesisSnapshot,
 )
@@ -42,6 +47,7 @@ class AgenticThesisWorkflow:
         self.model_calls = asyncio.Semaphore(3)
         # ponytail: one local writer lock; split by thesis only if commit throughput matters.
         self.commit_lock = asyncio.Lock()
+        self.ingest_lock = asyncio.Lock()
         builder = StateGraph(ResearchState)
         builder.add_node("retrieve_claims", self._retrieve_claims)
         builder.add_node("build_evidence_packs", self._build_evidence_packs)
@@ -72,16 +78,17 @@ class AgenticThesisWorkflow:
                 "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
             )
         ).fetchall()
-        if tables and version != 9:
+        if tables and version != 10:
             await connection.close()
             raise RuntimeError(
-                "AgenticThesis v0.9 requires an empty data directory; "
-                "older SQLite databases are not supported"
+                "AgenticThesis v1.0 requires an empty data directory; "
+                "pre-v1.0 SQLite databases are not supported"
             )
         if not tables:
-            await connection.execute("PRAGMA user_version = 9")
+            await connection.execute("PRAGMA user_version = 10")
             await connection.commit()
-        checkpoint_connection = await aiosqlite.connect(str(database))
+        await connection.execute("PRAGMA foreign_keys = ON")
+        checkpoint_connection = await aiosqlite.connect(f"{database}.checkpoints")
         checkpointer = AsyncSqliteSaver(checkpoint_connection)
         await checkpointer.setup()
         await connection.executescript(
@@ -120,15 +127,89 @@ class AgenticThesisWorkflow:
             CREATE TABLE IF NOT EXISTS disclosures (
                 document_id TEXT PRIMARY KEY,
                 thesis_id TEXT NOT NULL,
+                event_id TEXT NOT NULL,
                 accession TEXT NOT NULL,
                 filing_date TEXT NOT NULL,
                 source_url TEXT NOT NULL,
                 content_hash TEXT NOT NULL,
+                artifact_ids_json TEXT NOT NULL,
                 raw_text TEXT NOT NULL,
                 canonical_text TEXT NOT NULL,
                 chunks_json TEXT NOT NULL,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (thesis_id, event_id),
                 UNIQUE (thesis_id, content_hash)
+            );
+            CREATE TABLE IF NOT EXISTS disclosure_events (
+                event_id TEXT PRIMARY KEY,
+                thesis_id TEXT NOT NULL,
+                source TEXT NOT NULL,
+                authority TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                external_id TEXT NOT NULL,
+                filing_date TEXT NOT NULL,
+                published_at TEXT,
+                accepted_at TEXT,
+                amended_event_id TEXT,
+                metadata_json TEXT NOT NULL,
+                discovered_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (thesis_id, source, external_id)
+            );
+            CREATE TABLE IF NOT EXISTS source_artifacts (
+                artifact_id TEXT PRIMARY KEY,
+                content_hash TEXT NOT NULL UNIQUE,
+                media_type TEXT NOT NULL,
+                content BLOB NOT NULL,
+                byte_length INTEGER NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS event_artifacts (
+                event_id TEXT NOT NULL,
+                artifact_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                source_url TEXT NOT NULL,
+                retrieved_at TEXT NOT NULL,
+                parser_name TEXT,
+                parser_version TEXT,
+                parse_status TEXT NOT NULL,
+                parse_error TEXT,
+                PRIMARY KEY (event_id, artifact_id, role),
+                FOREIGN KEY (event_id) REFERENCES disclosure_events(event_id),
+                FOREIGN KEY (artifact_id) REFERENCES source_artifacts(artifact_id)
+            );
+            CREATE TABLE IF NOT EXISTS artifact_fetch_failures (
+                event_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                source_url TEXT NOT NULL,
+                error TEXT NOT NULL,
+                occurred_at TEXT NOT NULL,
+                PRIMARY KEY (event_id, role, source_url),
+                FOREIGN KEY (event_id) REFERENCES disclosure_events(event_id)
+            );
+            CREATE TABLE IF NOT EXISTS collection_attempts (
+                attempt_id TEXT PRIMARY KEY,
+                thesis_id TEXT NOT NULL,
+                source TEXT NOT NULL,
+                status TEXT NOT NULL,
+                started_at TEXT NOT NULL,
+                completed_at TEXT NOT NULL,
+                cursor_before TEXT,
+                cursor_after TEXT,
+                imported INTEGER NOT NULL,
+                error TEXT
+            );
+            CREATE TABLE IF NOT EXISTS radar_entries (
+                radar_id TEXT PRIMARY KEY,
+                thesis_id TEXT NOT NULL,
+                event_id TEXT NOT NULL,
+                outcome TEXT NOT NULL,
+                reason_codes_json TEXT NOT NULL,
+                matched_claim_ids_json TEXT NOT NULL,
+                matched_falsifiers_json TEXT NOT NULL,
+                run_id TEXT,
+                policy_version TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                UNIQUE (thesis_id, event_id, policy_version),
+                FOREIGN KEY (event_id) REFERENCES disclosure_events(event_id)
             );
             CREATE TABLE IF NOT EXISTS sec_monitors (
                 thesis_id TEXT PRIMARY KEY,
@@ -639,48 +720,141 @@ class AgenticThesisWorkflow:
 
     async def add_disclosure(
         self,
-        document: DisclosureDocument,
+        document: DisclosureDocument | None,
         canonical_text: str,
         chunks: list[DisclosureChunk],
-    ) -> bool:
-        content_hash = hashlib.sha256(document.content.encode()).hexdigest()
-        cursor = await self.connection.execute(
-            """
-            INSERT OR IGNORE INTO disclosures
-                (document_id, thesis_id, accession, filing_date, source_url,
-                 content_hash, raw_text, canonical_text, chunks_json)
-            SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
-            WHERE NOT EXISTS (
-                SELECT 1 FROM disclosures
-                WHERE thesis_id = ? AND accession = ?
-            )
-            """,
-            (
-                document.document_id,
-                document.thesis_id,
-                document.accession,
-                document.filing_date,
-                document.source_url,
-                content_hash,
-                document.content,
-                canonical_text,
-                json.dumps([chunk.model_dump(mode="json") for chunk in chunks]),
-                document.thesis_id,
-                document.accession,
-            ),
+        event: DisclosureEvent,
+        artifacts: list[tuple[SourceArtifact, bytes]],
+    ) -> tuple[bool, bool]:
+        content_hash = (
+            hashlib.sha256("|".join(document.artifact_ids).encode()).hexdigest()
+            if document else None
         )
-        await self.connection.commit()
-        return cursor.rowcount == 1
+        async with self.ingest_lock:
+            await self.connection.execute("BEGIN IMMEDIATE")
+            try:
+                existing = await (
+                    await self.connection.execute(
+                        """
+                        SELECT thesis_id, source, external_id
+                        FROM disclosure_events WHERE event_id = ?
+                        """,
+                        (event.event_id,),
+                    )
+                ).fetchone()
+                identity = (event.thesis_id, event.source, event.external_id)
+                if existing and existing != identity:
+                    raise ValueError("event_id already identifies another event")
+                event_cursor = await self.connection.execute(
+                    """
+                    INSERT OR IGNORE INTO disclosure_events
+                        (event_id, thesis_id, source, authority, event_type,
+                         external_id, filing_date, published_at, accepted_at,
+                         amended_event_id, metadata_json)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        event.event_id,
+                        event.thesis_id,
+                        event.source,
+                        event.authority,
+                        event.event_type,
+                        event.external_id,
+                        event.filing_date,
+                        event.published_at,
+                        event.accepted_at,
+                        event.amended_event_id,
+                        json.dumps(event.metadata, sort_keys=True),
+                    ),
+                )
+                if event_cursor.rowcount != 1 and existing is None:
+                    await self.connection.rollback()
+                    return False, False
+                for artifact, content in artifacts:
+                    await self.connection.execute(
+                        """
+                        INSERT OR IGNORE INTO source_artifacts
+                            (artifact_id, content_hash, media_type, content, byte_length)
+                        VALUES (?, ?, ?, ?, ?)
+                        """,
+                        (
+                            artifact.artifact_id,
+                            artifact.content_hash,
+                            artifact.media_type,
+                            content,
+                            artifact.byte_length,
+                        ),
+                    )
+                    await self.connection.execute(
+                        """
+                        INSERT OR IGNORE INTO event_artifacts
+                            (event_id, artifact_id, role, source_url, retrieved_at,
+                             parser_name, parser_version, parse_status, parse_error)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            event.event_id,
+                            artifact.artifact_id,
+                            artifact.role,
+                            artifact.source_url,
+                            artifact.retrieved_at,
+                            artifact.parser_name,
+                            artifact.parser_version,
+                            artifact.parse_status,
+                            artifact.parse_error,
+                        ),
+                    )
+                cursor = None
+                if document:
+                    cursor = await self.connection.execute(
+                        """
+                        INSERT OR IGNORE INTO disclosures
+                            (document_id, thesis_id, event_id, accession, filing_date,
+                             source_url, content_hash, artifact_ids_json, raw_text,
+                             canonical_text, chunks_json)
+                        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                        WHERE NOT EXISTS (
+                            SELECT 1 FROM disclosures
+                            WHERE thesis_id = ? AND accession = ?
+                        )
+                        """,
+                        (
+                            document.document_id,
+                            document.thesis_id,
+                            event.event_id,
+                            document.accession,
+                            document.filing_date,
+                            document.source_url,
+                            content_hash,
+                            json.dumps(document.artifact_ids),
+                            document.content,
+                            canonical_text,
+                            json.dumps([chunk.model_dump(mode="json") for chunk in chunks]),
+                            document.thesis_id,
+                            document.accession,
+                        ),
+                    )
+                    if cursor.rowcount != 1 and event_cursor.rowcount == 1:
+                        await self.connection.rollback()
+                        return False, False
+                await self.connection.commit()
+                return event_cursor.rowcount == 1, bool(cursor and cursor.rowcount == 1)
+            except Exception:
+                await self.connection.rollback()
+                raise
 
     async def list_disclosures(self, thesis_id: str) -> list[dict[str, Any]]:
         cursor = await self.connection.execute(
             """
-            SELECT document_id, thesis_id, accession, filing_date, source_url
+            SELECT document_id, thesis_id, accession, filing_date, source_url, event_id
             FROM disclosures WHERE thesis_id = ? ORDER BY filing_date DESC, document_id
             """,
             (thesis_id,),
         )
-        keys = ("document_id", "thesis_id", "accession", "filing_date", "source_url")
+        keys = (
+            "document_id", "thesis_id", "accession", "filing_date", "source_url",
+            "event_id",
+        )
         return [dict(zip(keys, row)) for row in await cursor.fetchall()]
 
     async def get_disclosure(
@@ -688,7 +862,8 @@ class AgenticThesisWorkflow:
     ) -> DisclosureDocument | None:
         cursor = await self.connection.execute(
             """
-            SELECT document_id, thesis_id, accession, filing_date, source_url, raw_text
+            SELECT document_id, thesis_id, accession, filing_date, source_url,
+                   raw_text, event_id, artifact_ids_json
             FROM disclosures WHERE thesis_id = ? AND document_id = ?
             """,
             (thesis_id, document_id),
@@ -701,9 +876,9 @@ class AgenticThesisWorkflow:
                 zip(
                     (
                         "document_id", "thesis_id", "accession", "filing_date",
-                        "source_url", "content",
+                        "source_url", "content", "event_id", "artifact_ids",
                     ),
-                    row,
+                    (*row[:7], json.loads(row[7])),
                 )
             )
         )
@@ -720,6 +895,187 @@ class AgenticThesisWorkflow:
             DisclosureChunk.model_validate(chunk)
             for chunk in json.loads(row[0])
         ] if row else []
+
+    async def get_event(self, event_id: str) -> dict[str, Any] | None:
+        cursor = await self.connection.execute(
+            """
+            SELECT event_id, thesis_id, source, authority, event_type, external_id,
+                   filing_date, published_at, accepted_at, amended_event_id,
+                   metadata_json
+            FROM disclosure_events WHERE event_id = ?
+            """,
+            (event_id,),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return None
+        keys = (
+            "event_id", "thesis_id", "source", "authority", "event_type",
+            "external_id", "filing_date", "published_at", "accepted_at",
+            "amended_event_id", "metadata",
+        )
+        return dict(zip(keys, (*row[:10], json.loads(row[10]))))
+
+    async def list_artifacts(self, event_id: str) -> list[dict[str, Any]]:
+        cursor = await self.connection.execute(
+            """
+            SELECT artifacts.artifact_id, links.event_id, links.role,
+                   links.source_url, artifacts.media_type, artifacts.content_hash,
+                   artifacts.byte_length, links.retrieved_at, links.parser_name,
+                   links.parser_version, links.parse_status, links.parse_error
+            FROM event_artifacts AS links
+            JOIN source_artifacts AS artifacts
+              ON artifacts.artifact_id = links.artifact_id
+            WHERE links.event_id = ?
+            ORDER BY links.role, artifacts.artifact_id
+            """,
+            (event_id,),
+        )
+        keys = (
+            "artifact_id", "event_id", "role", "source_url", "media_type",
+            "content_hash", "byte_length", "retrieved_at", "parser_name",
+            "parser_version", "parse_status", "parse_error",
+        )
+        return [dict(zip(keys, row)) for row in await cursor.fetchall()]
+
+    async def get_artifact_content(self, artifact_id: str) -> tuple[bytes, str] | None:
+        row = await (
+            await self.connection.execute(
+                """
+                SELECT content, media_type FROM source_artifacts
+                WHERE artifact_id = ?
+                """,
+                (artifact_id,),
+            )
+        ).fetchone()
+        return (bytes(row[0]), row[1]) if row else None
+
+    async def record_artifact_failures(
+        self, failures: list[ArtifactFetchFailure]
+    ) -> None:
+        if not failures:
+            return
+        await self.connection.executemany(
+            """
+            INSERT OR REPLACE INTO artifact_fetch_failures
+                (event_id, role, source_url, error, occurred_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    failure.event_id,
+                    failure.role,
+                    failure.source_url,
+                    failure.error,
+                    failure.occurred_at,
+                )
+                for failure in failures
+            ],
+        )
+        await self.connection.commit()
+
+    async def list_artifact_failures(self, event_id: str) -> list[dict[str, str]]:
+        cursor = await self.connection.execute(
+            """
+            SELECT event_id, role, source_url, error, occurred_at
+            FROM artifact_fetch_failures WHERE event_id = ?
+            ORDER BY role, source_url
+            """,
+            (event_id,),
+        )
+        keys = ("event_id", "role", "source_url", "error", "occurred_at")
+        return [dict(zip(keys, row)) for row in await cursor.fetchall()]
+
+    async def record_collection_attempt(self, attempt: CollectionAttempt) -> None:
+        await self.connection.execute(
+            """
+            INSERT INTO collection_attempts
+                (attempt_id, thesis_id, source, status, started_at, completed_at,
+                 cursor_before, cursor_after, imported, error)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                attempt.attempt_id,
+                attempt.thesis_id,
+                attempt.source,
+                attempt.status,
+                attempt.started_at,
+                attempt.completed_at,
+                attempt.cursor_before,
+                attempt.cursor_after,
+                attempt.imported,
+                attempt.error,
+            ),
+        )
+        await self.connection.commit()
+
+    async def list_collection_attempts(self, thesis_id: str) -> list[dict[str, Any]]:
+        cursor = await self.connection.execute(
+            """
+            SELECT attempt_id, thesis_id, source, status, started_at, completed_at,
+                   cursor_before, cursor_after, imported, error
+            FROM collection_attempts
+            WHERE thesis_id = ? ORDER BY started_at DESC, attempt_id DESC
+            """,
+            (thesis_id,),
+        )
+        keys = (
+            "attempt_id", "thesis_id", "source", "status", "started_at",
+            "completed_at", "cursor_before", "cursor_after", "imported", "error",
+        )
+        return [dict(zip(keys, row)) for row in await cursor.fetchall()]
+
+    async def put_radar_entry(self, entry: RadarEntry) -> bool:
+        cursor = await self.connection.execute(
+            """
+            INSERT OR IGNORE INTO radar_entries
+                (radar_id, thesis_id, event_id, outcome, reason_codes_json,
+                 matched_claim_ids_json, matched_falsifiers_json, run_id,
+                 policy_version, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                entry.radar_id,
+                entry.thesis_id,
+                entry.event_id,
+                entry.outcome,
+                json.dumps(entry.reason_codes),
+                json.dumps(entry.matched_claim_ids),
+                json.dumps(entry.matched_falsifiers),
+                entry.run_id,
+                entry.policy_version,
+                entry.created_at,
+            ),
+        )
+        await self.connection.commit()
+        return cursor.rowcount == 1
+
+    async def list_radar_entries(self, thesis_id: str) -> list[dict[str, Any]]:
+        cursor = await self.connection.execute(
+            """
+            SELECT radar_id, thesis_id, event_id, outcome, reason_codes_json,
+                   matched_claim_ids_json, matched_falsifiers_json, run_id,
+                   policy_version, created_at
+            FROM radar_entries WHERE thesis_id = ?
+            ORDER BY created_at DESC, radar_id DESC
+            """,
+            (thesis_id,),
+        )
+        return [
+            {
+                "radar_id": row[0],
+                "thesis_id": row[1],
+                "event_id": row[2],
+                "outcome": row[3],
+                "reason_codes": json.loads(row[4]),
+                "matched_claim_ids": json.loads(row[5]),
+                "matched_falsifiers": json.loads(row[6]),
+                "run_id": row[7],
+                "policy_version": row[8],
+                "created_at": row[9],
+            }
+            for row in await cursor.fetchall()
+        ]
 
     async def list_revisions(self, thesis_id: str) -> list[dict[str, Any]]:
         cursor = await self.connection.execute(

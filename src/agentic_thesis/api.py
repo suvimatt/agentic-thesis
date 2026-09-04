@@ -1,31 +1,43 @@
 import asyncio
 import hashlib
 import json
+import mimetypes
 import os
 import urllib.parse
 import urllib.request
+import uuid
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import aclosing, asynccontextmanager
 from datetime import datetime, timezone
+from html.parser import HTMLParser
 from importlib.resources import files
 from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
 from pydantic import BaseModel, Field, field_validator
 
 from agentic_thesis.engine import AgenticThesisEngine, EngineConflictError
 from agentic_thesis.models import (
+    ArtifactFetchFailure,
+    ArtifactInput,
+    CollectionAttempt,
+    CollectionStatus,
     DisclosureDocument,
+    DisclosureEvent,
     DisclosureSummary,
+    RadarEntry,
+    RadarOutcome,
     ReviewDecision,
     RunStatus,
     RunSummary,
     SecMonitor,
+    SourceAuthority,
+    SourceArtifact,
     ThesisRevision,
     ThesisRun,
     ThesisSnapshot,
@@ -63,6 +75,62 @@ class SecMonitorInput(BaseModel):
         return forms
 
 
+class _SecFilingIndexParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.rows: list[list[dict[str, str]]] = []
+        self._row: list[dict[str, str]] | None = None
+        self._cell: dict[str, str] | None = None
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag == "tr":
+            self._row = []
+        elif tag in {"td", "th"} and self._row is not None:
+            self._cell = {"text": "", "href": ""}
+        elif tag == "a" and self._cell is not None:
+            self._cell["href"] = dict(attrs).get("href") or ""
+
+    def handle_data(self, data: str) -> None:
+        if self._cell is not None:
+            self._cell["text"] += data
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in {"td", "th"} and self._row is not None and self._cell is not None:
+            self._cell["text"] = " ".join(self._cell["text"].split())
+            self._row.append(self._cell)
+            self._cell = None
+        elif tag == "tr" and self._row is not None:
+            if self._row:
+                self.rows.append(self._row)
+            self._row = None
+
+
+def _sec_form_metadata(form: str) -> dict[str, str]:
+    normalized = form.strip().upper()
+    is_amendment = normalized.endswith("/A")
+    base_form = normalized[:-2] if is_amendment else normalized
+    if base_form in {"10-K", "10-Q", "20-F", "40-F", "6-K"}:
+        family = "periodic_report"
+    elif base_form == "8-K":
+        family = "current_report"
+    elif base_form in {"DEF 14A", "PRE 14A"}:
+        family = "proxy"
+    elif base_form in {"3", "4", "5"}:
+        family = "insider_ownership"
+    elif base_form in {"SC 13D", "SC 13G"}:
+        family = "beneficial_ownership"
+    elif base_form.startswith("13F"):
+        family = "institutional_holdings"
+    else:
+        family = "other"
+    return {
+        "form": normalized,
+        "base_form": base_form,
+        "form_family": family,
+        "is_amendment": str(is_amendment).lower(),
+    }
+
+
 class SecEdgarClient:
     def __init__(self, user_agent: str) -> None:
         self.user_agent = user_agent
@@ -70,7 +138,7 @@ class SecEdgarClient:
     def _read(self, url: str) -> bytes:
         request = urllib.request.Request(
             url,
-            headers={"User-Agent": self.user_agent, "Accept": "application/json,text/html"},
+            headers={"User-Agent": self.user_agent, "Accept": "*/*"},
         )
         with urllib.request.urlopen(request, timeout=30) as response:
             content = response.read(10_000_001)
@@ -78,34 +146,113 @@ class SecEdgarClient:
             raise ValueError("SEC response exceeds 10 MB")
         return content
 
-    async def recent_filings(self, cik: str) -> list[dict[str, str]]:
+    @staticmethod
+    def _filing_rows(payload: dict) -> list[dict[str, str]]:
+        accepted = payload.get("acceptanceDateTime", [])
+        reports = payload.get("reportDate", [])
+        items = payload.get("items", [])
+        return [
+            {
+                "accession": accession,
+                "filing_date": payload["filingDate"][index],
+                "form": payload["form"][index],
+                "primary_document": payload["primaryDocument"][index],
+                "accepted_at": accepted[index] if index < len(accepted) else "",
+                "report_date": reports[index] if index < len(reports) else "",
+                "items": items[index] if index < len(items) else "",
+            }
+            for index, accession in enumerate(payload["accessionNumber"])
+        ]
+
+    async def filings(
+        self, cik: str, after_accession: str | None = None
+    ) -> list[dict[str, str]]:
         payload = json.loads(
             await asyncio.to_thread(
                 self._read,
                 f"https://data.sec.gov/submissions/CIK{cik}.json",
             )
         )
-        recent = payload["filings"]["recent"]
-        return [
-            {
-                "accession": accession,
-                "filing_date": recent["filingDate"][index],
-                "form": recent["form"][index],
-                "primary_document": recent["primaryDocument"][index],
-            }
-            for index, accession in enumerate(recent["accessionNumber"])
-        ]
+        filings = self._filing_rows(payload["filings"]["recent"])
+        if not after_accession or any(
+            item["accession"] == after_accession for item in filings
+        ):
+            return filings
+        for page in payload["filings"].get("files", []):
+            older = json.loads(
+                await asyncio.to_thread(
+                    self._read,
+                    "https://data.sec.gov/submissions/"
+                    + urllib.parse.quote(page["name"], safe=""),
+                )
+            )
+            filings.extend(self._filing_rows(older))
+            if any(item["accession"] == after_accession for item in filings):
+                return filings
+        raise ValueError(f"SEC cursor not found: {after_accession}")
 
-    async def filing_html(
+    async def filing_artifacts(
         self,
         cik: str,
         filing: dict[str, str],
-    ) -> tuple[str, str]:
+    ) -> tuple[list[ArtifactInput], list[dict[str, str]]]:
         accession = filing["accession"].replace("-", "")
-        document = urllib.parse.quote(filing["primary_document"], safe="")
-        url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession}/{document}"
-        content = await asyncio.to_thread(self._read, url)
-        return content.decode("utf-8", errors="ignore"), url
+        base = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession}/"
+        index_url = base + urllib.parse.quote(filing["accession"] + "-index.html", safe="")
+        index_content = await asyncio.to_thread(self._read, index_url)
+        artifacts = [
+            ArtifactInput(
+                role="filing_index",
+                source_url=index_url,
+                media_type="text/html",
+                content=index_content,
+            )
+        ]
+        parser = _SecFilingIndexParser()
+        parser.feed(index_content.decode("utf-8", errors="replace"))
+        documents: list[tuple[str, str]] = [
+            (filing["primary_document"], filing["form"].upper())
+        ]
+        for row in parser.rows:
+            if len(row) < 4 or not row[2]["href"]:
+                continue
+            name = Path(urllib.parse.unquote(urllib.parse.urlparse(row[2]["href"]).path)).name
+            document_type = row[3]["text"].upper()
+            if (
+                name == filing["primary_document"]
+                or document_type == filing["form"].upper()
+                or document_type.startswith("EX-")
+                or Path(name).suffix.lower() == ".xml"
+            ):
+                documents.append((name, document_type))
+        failures: list[dict[str, str]] = []
+        seen: set[str] = set()
+        for name, document_type in documents:
+            if name in seen:
+                continue
+            seen.add(name)
+            url = base + urllib.parse.quote(name, safe="")
+            role = (
+                "primary_document"
+                if name == filing["primary_document"]
+                else "exhibit" if document_type.startswith("EX-")
+                else "structured_data"
+            )
+            try:
+                content = await asyncio.to_thread(self._read, url)
+            except Exception as exc:
+                failures.append({"role": role, "source_url": url, "error": str(exc)})
+                continue
+            media_type = mimetypes.guess_type(name)[0] or "application/octet-stream"
+            artifacts.append(
+                ArtifactInput(
+                    role=role,
+                    source_url=url,
+                    media_type=media_type,
+                    content=content,
+                )
+            )
+        return artifacts, failures
 
 
 def _public_state(state: ThesisRun) -> dict:
@@ -220,7 +367,7 @@ def create_app(
         if engine is None:
             await app.state.engine.close()
 
-    app = FastAPI(title="AgenticThesis", version="0.9.0", lifespan=lifespan)
+    app = FastAPI(title="AgenticThesis", version="1.0.0a1", lifespan=lifespan)
     if engine is not None:
         app.state.engine = (
             engine
@@ -246,40 +393,41 @@ def create_app(
     ) -> None:
         terminal = False
         try:
-            async for update in app.state.engine.execute_run(run_id):
-                for node, payload in update.items():
-                    if node == "__interrupt__":
-                        await publish(
-                            run_id,
-                            {"node": "human_review", "status": "awaiting_review", "error": None},
-                        )
-                        terminal = True
-                        continue
-                    event = {
-                        "node": node,
-                        "status": "running",
-                        "latency_ms": payload.get("timings_ms", {}).get(node),
-                        "total_ms": round(sum(payload.get("timings_ms", {}).values()), 3),
-                        "error": None,
-                    }
-                    if node == "retrieve_claims":
-                        event["claims"] = [
-                            {"claim_id": claim_id, **timings}
-                            for claim_id, timings in payload.get(
-                                "retrieval_timings_ms",
-                                {},
-                            ).items()
-                        ]
-                    if node == "build_evidence_packs":
-                        event["claims"] = [
-                            {
-                                "claim_id": pack.claim_id,
-                                "tokens_before": pack.tokens_before,
-                                "tokens_after": pack.tokens_after,
-                            }
-                            for pack in payload.get("evidence_packs", [])
-                        ]
-                    await publish(run_id, event)
+            async with aclosing(app.state.engine.execute_run(run_id)) as updates:
+                async for update in updates:
+                    for node, payload in update.items():
+                        if node == "__interrupt__":
+                            await publish(
+                                run_id,
+                                {"node": "human_review", "status": "awaiting_review", "error": None},
+                            )
+                            terminal = True
+                            continue
+                        event = {
+                            "node": node,
+                            "status": "running",
+                            "latency_ms": payload.get("timings_ms", {}).get(node),
+                            "total_ms": round(sum(payload.get("timings_ms", {}).values()), 3),
+                            "error": None,
+                        }
+                        if node == "retrieve_claims":
+                            event["claims"] = [
+                                {"claim_id": claim_id, **timings}
+                                for claim_id, timings in payload.get(
+                                    "retrieval_timings_ms",
+                                    {},
+                                ).items()
+                            ]
+                        if node == "build_evidence_packs":
+                            event["claims"] = [
+                                {
+                                    "claim_id": pack.claim_id,
+                                    "tokens_before": pack.tokens_before,
+                                    "tokens_after": pack.tokens_after,
+                                }
+                                for pack in payload.get("evidence_packs", [])
+                            ]
+                        await publish(run_id, event)
             if not terminal:
                 state = await app.state.engine.get_run(run_id)
                 await publish(
@@ -373,8 +521,13 @@ def create_app(
                 status_code=503,
                 detail="Set AGENTIC_THESIS_SEC_USER_AGENT to a name and contact email",
             )
+        attempt_id = str(uuid.uuid4())
+        started_at = datetime.now(timezone.utc).isoformat()
+        imported = 0
         try:
-            filings = await app.state.sec_client.recent_filings(monitor.cik)
+            filings = await app.state.sec_client.filings(
+                monitor.cik, monitor.last_accession
+            )
             matching = [item for item in filings if item["form"] in monitor.forms]
             if monitor.last_accession:
                 accessions = [item["accession"] for item in matching]
@@ -387,28 +540,90 @@ def create_app(
                 candidates = matching[:1]
             run_ids = []
             for filing in reversed(candidates):
-                content, source_url = await app.state.sec_client.filing_html(
+                artifacts, failures = await app.state.sec_client.filing_artifacts(
                     monitor.cik, filing
                 )
-                document = DisclosureDocument(
-                    document_id=f"{thesis_id}:{filing['accession']}",
-                    thesis_id=thesis_id,
-                    accession=filing["accession"],
-                    filing_date=filing["filing_date"],
-                    source_url=source_url,
-                    content=content,
+                event_id = (
+                    f"sec:{filing['accession']}:"
+                    + hashlib.sha256(thesis_id.encode()).hexdigest()[:12]
                 )
-                try:
-                    await app.state.engine.add_disclosure(document)
-                except EngineConflictError:
-                    continue
-                run_id = f"sec-{thesis_id}-{filing['accession']}"
-                await launch_run(run_id, thesis_id, document.document_id)
-                run_ids.append(run_id)
+                event = DisclosureEvent(
+                    event_id=event_id,
+                    thesis_id=thesis_id,
+                    source="sec-edgar",
+                    authority=SourceAuthority.REGULATOR,
+                    event_type=f"sec:{filing['form']}",
+                    external_id=filing["accession"],
+                    filing_date=filing["filing_date"],
+                    published_at=filing.get("filing_date"),
+                    accepted_at=filing.get("accepted_at") or None,
+                    metadata={
+                        "cik": monitor.cik,
+                        "primary_document": filing["primary_document"],
+                        "report_date": filing.get("report_date") or "",
+                        "items": filing.get("items") or "",
+                        **_sec_form_metadata(filing["form"]),
+                    },
+                )
+                result = await app.state.engine.ingest_event(event, artifacts)
+                await app.state.engine.record_artifact_failures(
+                    [
+                        ArtifactFetchFailure(
+                            event_id=event_id,
+                            occurred_at=datetime.now(timezone.utc).isoformat(),
+                            **failure,
+                        )
+                        for failure in failures
+                    ]
+                )
+                if result.event_created:
+                    imported += 1
+                run_id = (
+                    f"sec-{thesis_id}-{filing['accession']}"
+                    if result.disclosure_created and result.document_id
+                    else None
+                )
+                policy_version = "sec-configured-form-v1"
+                await app.state.engine.put_radar_entry(
+                    RadarEntry(
+                        radar_id="radar:" + hashlib.sha256(
+                            f"{thesis_id}:{event_id}:{policy_version}".encode()
+                        ).hexdigest()[:24],
+                        thesis_id=thesis_id,
+                        event_id=event_id,
+                        outcome=(
+                            RadarOutcome.NEEDS_REVIEW
+                            if run_id else RadarOutcome.DIGEST
+                        ),
+                        reason_codes=[
+                            "configured_sec_form" if run_id else "no_parseable_evidence"
+                        ],
+                        run_id=run_id,
+                        policy_version=policy_version,
+                        created_at=datetime.now(timezone.utc).isoformat(),
+                    )
+                )
+                if result.disclosure_created and result.document_id:
+                    await launch_run(run_id, thesis_id, result.document_id)
+                    run_ids.append(run_id)
+            cursor_after = matching[0]["accession"] if matching else monitor.last_accession
             await app.state.engine.record_sec_sync(
                 thesis_id,
-                last_accession=matching[0]["accession"] if matching else None,
-                imported=len(run_ids),
+                last_accession=cursor_after,
+                imported=imported,
+            )
+            await app.state.engine.record_collection_attempt(
+                CollectionAttempt(
+                    attempt_id=attempt_id,
+                    thesis_id=thesis_id,
+                    source="sec-edgar",
+                    status=CollectionStatus.SUCCEEDED,
+                    started_at=started_at,
+                    completed_at=datetime.now(timezone.utc).isoformat(),
+                    cursor_before=monitor.last_accession,
+                    cursor_after=cursor_after,
+                    imported=imported,
+                )
             )
         except HTTPException:
             raise
@@ -419,11 +634,24 @@ def create_app(
                 imported=0,
                 error=str(exc),
             )
+            await app.state.engine.record_collection_attempt(
+                CollectionAttempt(
+                    attempt_id=attempt_id,
+                    thesis_id=thesis_id,
+                    source="sec-edgar",
+                    status=CollectionStatus.FAILED,
+                    started_at=started_at,
+                    completed_at=datetime.now(timezone.utc).isoformat(),
+                    cursor_before=monitor.last_accession,
+                    imported=imported,
+                    error=str(exc),
+                )
+            )
             raise HTTPException(status_code=502, detail=f"SEC sync failed: {exc}") from exc
         return {
             "thesis_id": thesis_id,
             "checked": len(matching),
-            "imported": len(run_ids),
+            "imported": imported,
             "run_ids": run_ids,
         }
 
@@ -453,6 +681,41 @@ def create_app(
     @app.get("/disclosures")
     async def list_disclosures(thesis_id: str) -> list[DisclosureSummary]:
         return await app.state.engine.list_disclosures(thesis_id)
+
+    @app.get("/events/{event_id}")
+    async def get_event(event_id: str) -> DisclosureEvent:
+        event = await app.state.engine.get_event(event_id)
+        if event is None:
+            raise HTTPException(status_code=404, detail="event not found")
+        return event
+
+    @app.get("/events/{event_id}/artifacts")
+    async def list_artifacts(event_id: str) -> list[SourceArtifact]:
+        return await app.state.engine.list_artifacts(event_id)
+
+    @app.get("/artifacts/{artifact_id}")
+    async def get_artifact(artifact_id: str) -> Response:
+        artifact = await app.state.engine.get_artifact_content(artifact_id)
+        if artifact is None:
+            raise HTTPException(status_code=404, detail="artifact not found")
+        content, media_type = artifact
+        return Response(
+            content=content,
+            media_type=media_type,
+            headers={"ETag": f'"{artifact_id.removeprefix("sha256:")}"'},
+        )
+
+    @app.get("/events/{event_id}/failures")
+    async def list_artifact_failures(event_id: str) -> list[ArtifactFetchFailure]:
+        return await app.state.engine.list_artifact_failures(event_id)
+
+    @app.get("/collection-attempts")
+    async def list_collection_attempts(thesis_id: str) -> list[CollectionAttempt]:
+        return await app.state.engine.list_collection_attempts(thesis_id)
+
+    @app.get("/radar")
+    async def list_radar_entries(thesis_id: str) -> list[RadarEntry]:
+        return await app.state.engine.list_radar_entries(thesis_id)
 
     @app.post("/disclosures", status_code=201)
     async def create_disclosure(document: DisclosureDocument) -> dict:
@@ -522,6 +785,9 @@ def create_app(
                         "version_conflict",
                         "invalid_review",
                     }:
+                        task = app.state.run_tasks.get(run_id)
+                        if task is not None and not task.done():
+                            await asyncio.shield(task)
                         return
 
         return StreamingResponse(stream(), media_type="text/event-stream")

@@ -9,8 +9,9 @@ from types import SimpleNamespace
 
 from httpx import ASGITransport, AsyncClient
 
-from agentic_thesis.api import create_app
+from agentic_thesis.api import SecEdgarClient, create_app
 from agentic_thesis.models import (
+    ArtifactInput,
     ClaimDelta,
     DeltaStatus,
     DisclosureChunk,
@@ -658,6 +659,8 @@ async def test_app_shutdown_waits_for_inflight_run_cancellation(tmp_path: Path) 
             async with asyncio.timeout(2):
                 events = await client.get("/runs/shutdown-run/events")
             assert '"status": "awaiting_review"' in events.text
+    assert not restarted_app.state.run_tasks["shutdown-run"].cancelled()
+    assert restarted_app.state.run_tasks["shutdown-run"].exception() is None
     await restarted.close()
 
 
@@ -814,6 +817,7 @@ async def test_langgraph_resumes_after_restart_and_rejects_stale_commit(tmp_path
         assert '"total_ms":' in events.text
         assert '"tokens_after"' in events.text
         assert '"status": "awaiting_review"' in events.text
+        assert app.state.run_tasks["api-run"].done()
         assert (await client.get("/runs/api-run")).json()["status"] == "awaiting_review"
 
         reviewed = await client.post("/runs/api-run/review", json={"action": "approve"})
@@ -835,7 +839,8 @@ async def test_langgraph_resumes_after_restart_and_rejects_stale_commit(tmp_path
             },
         )
         assert latest_started.status_code == 202
-        await client.get("/runs/api-latest/events")
+        async with asyncio.timeout(2):
+            await client.get("/runs/api-latest/events")
         latest_state = (await client.get("/runs/api-latest")).json()
         assert latest_state["thesis"]["version"] == 2
         invalid_review = await client.post(
@@ -966,9 +971,11 @@ async def test_run_history_and_sse_replay_survive_restart(tmp_path: Path) -> Non
             },
         )
         assert started.status_code == 202
-        events = await client.get("/runs/history-run/events")
+        async with asyncio.timeout(2):
+            events = await client.get("/runs/history-run/events")
         assert "id: 1" in events.text
         assert '"status": "awaiting_review"' in events.text
+        assert first_app.state.run_tasks["history-run"].done()
     await first.close()
 
     restarted = await AgenticThesisWorkflow.create(database, FakeRetriever(), analyze)
@@ -989,10 +996,11 @@ async def test_run_history_and_sse_replay_survive_restart(tmp_path: Path) -> Non
                 "error": None,
             }
         ]
-        replayed = await client.get(
-            "/runs/history-run/events",
-            headers={"Last-Event-ID": "2"},
-        )
+        async with asyncio.timeout(2):
+            replayed = await client.get(
+                "/runs/history-run/events",
+                headers={"Last-Event-ID": "2"},
+            )
         assert "id: 1" not in replayed.text
         assert "id: 2" not in replayed.text
         assert "id: 3" in replayed.text
@@ -1132,6 +1140,72 @@ async def test_multiple_theses_use_only_their_own_manual_disclosures(tmp_path: P
     await workflow.close()
 
 
+async def test_sec_client_traverses_submission_history_and_collects_artifacts() -> None:
+    cik = "0000320193"
+    accession = "0000320193-24-000010"
+    main = {
+        "filings": {
+            "recent": {
+                "accessionNumber": ["0000320193-25-000079"],
+                "filingDate": ["2025-08-01"],
+                "form": ["8-K"],
+                "primaryDocument": ["current.htm"],
+                "acceptanceDateTime": ["2025-08-01T16:05:00.000Z"],
+                "reportDate": ["2025-08-01"],
+            },
+            "files": [{"name": "CIK0000320193-submissions-001.json"}],
+        }
+    }
+    older = {
+        "accessionNumber": [accession],
+        "filingDate": ["2024-05-01"],
+        "form": ["8-K"],
+        "primaryDocument": ["primary.htm"],
+        "acceptanceDateTime": ["2024-05-01T12:00:00.000Z"],
+        "reportDate": ["2024-05-01"],
+    }
+    index = b"""
+    <table class="tableFile">
+      <tr><th>Seq</th><th>Description</th><th>Document</th><th>Type</th><th>Size</th></tr>
+      <tr><td>1</td><td>Current report</td><td><a href="primary.htm">primary.htm</a></td><td>8-K</td><td>100</td></tr>
+      <tr><td>2</td><td>Press release</td><td><a href="ex991.htm">ex991.htm</a></td><td>EX-99.1</td><td>100</td></tr>
+      <tr><td>3</td><td>XBRL instance</td><td><a href="facts.xml">facts.xml</a></td><td>XML</td><td>100</td></tr>
+      <tr><td>4</td><td>Graphic</td><td><a href="logo.jpg">logo.jpg</a></td><td>GRAPHIC</td><td>100</td></tr>
+    </table>
+    """
+    base = "https://www.sec.gov/Archives/edgar/data/320193/000032019324000010/"
+    responses = {
+        f"https://data.sec.gov/submissions/CIK{cik}.json": json.dumps(main).encode(),
+        "https://data.sec.gov/submissions/CIK0000320193-submissions-001.json": json.dumps(older).encode(),
+        base + accession + "-index.html": index,
+        base + "primary.htm": b"<html><body>Primary evidence.</body></html>",
+        base + "ex991.htm": b"<html><body>Exhibit evidence.</body></html>",
+    }
+    client = SecEdgarClient("AgenticThesis test@example.com")
+
+    def read(url: str) -> bytes:
+        if url.endswith("facts.xml"):
+            raise TimeoutError("structured data timed out")
+        return responses[url]
+
+    client._read = read
+    filings = await client.filings(cik, accession)
+    assert [item["accession"] for item in filings] == [
+        "0000320193-25-000079", accession
+    ]
+    artifacts, failures = await client.filing_artifacts(cik, filings[1])
+    assert {artifact.role for artifact in artifacts} == {
+        "filing_index", "primary_document", "exhibit"
+    }
+    assert failures == [
+        {
+            "role": "structured_data",
+            "source_url": base + "facts.xml",
+            "error": "structured data timed out",
+        }
+    ]
+
+
 async def test_sec_sync_imports_one_new_filing_once_and_starts_review(
     tmp_path: Path,
 ) -> None:
@@ -1168,7 +1242,9 @@ async def test_sec_sync_imports_one_new_filing_once_and_starts_review(
         )
 
     class FakeSec:
-        async def recent_filings(self, cik: str) -> list[dict[str, str]]:
+        async def filings(
+            self, cik: str, after_accession: str | None = None
+        ) -> list[dict[str, str]]:
             assert cik == "0000320193"
             return [
                 {
@@ -1179,12 +1255,17 @@ async def test_sec_sync_imports_one_new_filing_once_and_starts_review(
                 }
             ]
 
-        async def filing_html(self, cik: str, filing: dict[str, str]) -> tuple[str, str]:
-            return (
-                "<html><body><h2>Item 2.</h2>Services revenue increased.</body></html>",
+        async def filing_artifacts(self, cik: str, filing: dict[str, str]):
+            url = (
                 "https://www.sec.gov/Archives/edgar/data/320193/"
-                "000032019325000079/aapl-20250628.htm",
+                "000032019325000079/aapl-20250628.htm"
             )
+            return [ArtifactInput(
+                role="primary_document",
+                source_url=url,
+                media_type="text/html",
+                content=b"<html><body><h2>Item 2.</h2>Services revenue increased.</body></html>",
+            )], []
 
     thesis = ThesisSnapshot(
         thesis_id="apple-monitor",
@@ -1223,14 +1304,35 @@ async def test_sec_sync_imports_one_new_filing_once_and_starts_review(
             "imported": 1,
             "run_ids": ["sec-apple-monitor-0000320193-25-000079"],
         }
-        events = await client.get(
-            "/runs/sec-apple-monitor-0000320193-25-000079/events"
-        )
+        async with asyncio.timeout(2):
+            events = await client.get(
+                "/runs/sec-apple-monitor-0000320193-25-000079/events"
+            )
         assert '"status": "awaiting_review"' in events.text
+        assert app.state.run_tasks[
+            "sec-apple-monitor-0000320193-25-000079"
+        ].done()
         monitor = (await client.get("/monitors")).json()[0]
         assert monitor["last_accession"] == "0000320193-25-000079"
         assert monitor["last_imported"] == 1
         assert monitor["last_error"] is None
+        attempts = (
+            await client.get(
+                "/collection-attempts", params={"thesis_id": "apple-monitor"}
+            )
+        ).json()
+        assert attempts[0]["status"] == "succeeded"
+        assert attempts[0]["cursor_after"] == "0000320193-25-000079"
+        assert attempts[0]["imported"] == 1
+        radar = (
+            await client.get("/radar", params={"thesis_id": "apple-monitor"})
+        ).json()
+        assert radar[0]["outcome"] == "needs_review"
+        assert radar[0]["reason_codes"] == ["configured_sec_form"]
+        assert radar[0]["run_id"] == "sec-apple-monitor-0000320193-25-000079"
+        event = (await client.get(f"/events/{radar[0]['event_id']}")).json()
+        assert event["metadata"]["form_family"] == "periodic_report"
+        assert event["metadata"]["is_amendment"] == "false"
         assert len(
             (
                 await client.get(
@@ -1319,7 +1421,9 @@ async def test_enabled_sec_monitor_polls_and_creates_a_review_run(
         def __init__(self) -> None:
             self.checks = 0
 
-        async def recent_filings(self, cik: str) -> list[dict[str, str]]:
+        async def filings(
+            self, cik: str, after_accession: str | None = None
+        ) -> list[dict[str, str]]:
             self.checks += 1
             if self.checks > 2:
                 raise RuntimeError("SEC was checked again before the next interval")
@@ -1332,12 +1436,20 @@ async def test_enabled_sec_monitor_polls_and_creates_a_review_run(
                 }
             ]
 
-        async def filing_html(self, cik: str, filing: dict[str, str]) -> tuple[str, str]:
-            return (
-                f"<html><body>Cloud demand remained durable. {filing['accession']}</body></html>",
+        async def filing_artifacts(self, cik: str, filing: dict[str, str]):
+            url = (
                 "https://www.sec.gov/Archives/edgar/data/789019/"
-                f"{filing['accession'].replace('-', '')}/msft-20250630.htm",
+                f"{filing['accession'].replace('-', '')}/msft-20250630.htm"
             )
+            return [ArtifactInput(
+                role="primary_document",
+                source_url=url,
+                media_type="text/html",
+                content=(
+                    f"<html><body>Cloud demand remained durable. "
+                    f"{filing['accession']}</body></html>"
+                ).encode(),
+            )], []
 
     thesis = ThesisSnapshot(
         thesis_id="microsoft-monitor",
@@ -1395,7 +1507,9 @@ async def test_failed_sec_collection_does_not_count_as_a_success(
         raise AssertionError("analysis must not run when collection fails")
 
     class FailingSec:
-        async def recent_filings(self, cik: str) -> list[dict[str, str]]:
+        async def filings(
+            self, cik: str, after_accession: str | None = None
+        ) -> list[dict[str, str]]:
             raise TimeoutError("SEC timed out")
 
     thesis = ThesisSnapshot(
@@ -1431,4 +1545,11 @@ async def test_failed_sec_collection_does_not_count_as_a_success(
         monitor = (await client.get("/monitors")).json()[0]
         assert monitor["last_checked_at"] is None
         assert monitor["last_error"] == "SEC timed out"
+        attempts = (
+            await client.get(
+                "/collection-attempts", params={"thesis_id": "failed-monitor"}
+            )
+        ).json()
+        assert attempts[0]["status"] == "failed"
+        assert attempts[0]["error"] == "SEC timed out"
     await workflow.close()

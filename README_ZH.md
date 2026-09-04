@@ -15,20 +15,33 @@
 
 <h2 align="center">让每一份新的公司报告，都来挑战你的投资 Thesis</h2>
 
-AgenticThesis 是一个开源的 Agentic Thesis Intelligence 系统，服务于愿意说清楚“为什么持有或关注一家公司，以及什么事实会证明自己错了”的投资者。无论你是靠自己学习投资，还是有专业金融背景，重要的都不是身份，而是你关心股票背后的公司生意，也愿意在事实变化时重新检查自己的判断。
+AgenticThesis 是一个开源 AI Agent，它用公司最新提交的正式报告，检验你的投资 Thesis（你为什么持有一只股票），并提供准确的原文引用、Human Review 和版本历史。
 
-它持续读取公司的正式报告，把新证据与你写下的理由和“什么情况说明它错了”逐条对照，生成带原文引用的 Thesis 变更建议。只有经过 Human Review，这次修改才会写入可追溯的 Thesis 版本历史。
+**它为所有关心股票背后公司生意的投资者而做——无论你采用哪种投资风格。**
+
+你可以主要依靠公司研究，也可以同时参考价格走势、市场事件或其他方法。AgenticThesis 不要求你属于某个投资流派；它只专注于一件事：检查新的公司证据是在支持、削弱，还是推翻你写下的持股理由。
+
+你写下这些理由，以及什么事实会证明每条理由错了。AgenticThesis 持续读取公司的正式报告，提出有证据的更新建议，并展示准确的报告原文。只有经过你的检查和批准，修改才会进入可追溯的 Thesis 版本历史。
 
 > AgenticThesis 不只告诉你公司发生了什么；它说明新证据会怎样改变你的 Thesis，并要求你亲自批准这次改变。
 
-> **当前状态：Alpha。** 1.0 之前 public interface 可能变更。
+> **当前状态：v1.0 alpha 开发中。** PyPI 最新发布版仍为 v0.9.0。
 
 同一个 Python distribution 提供两个入口：
 
 - `agentic-thesis serve` 使用 SQLite 和 embedded Qdrant 运行 self-host 应用；
 - `AgenticThesisEngine` 是其他 Python 应用使用的受支持 interface。
 
-v0.9 不再每隔固定数量的 token 把报告切一刀，而是识别报告里的标题、段落、列表和表格。检索时保留足够的上下文，最终展示给人的 citation 则始终是一条完整、精确的句子、列表项或表格行。系统会同时搜索你保存的理由，以及能够证明这条理由错误的事实。
+### v1.0 alpha.1 到底升级了什么？
+
+**v0.9 更像一个“财报阅读器”：你先给它一份报告，它再检查这份报告会不会影响你的持股理由。v1.0 alpha.1 开始把它变成一个会主动盯住公司向 SEC（美国证券监管机构）提交的新文件的雷达。**
+
+- 它会记住上次检查到哪一份 SEC 文件，并在下一次检查时只处理新文件；即使那条旧记录已经被挤出最新列表，也能翻到历史页面接着找；
+- 它不再只保存报告正文，还会原样保存 SEC 的文件目录页、正式报告、重要附件和机器可读的财务数据（XML），并记录文件来源、内容指纹和解析结果；
+- 某个附件下载失败时，已经拿到的材料不会被丢掉；系统会明确告诉你缺了哪个附件、为什么失败；
+- 每份新报告先由 Radar 决定怎么处理：有可读正文，就启动原有 Thesis workflow，逐条检查你的持股理由并等待 Human Review；没有可读正文，就只记录这次发现和原因，不强行让 AI 下结论。
+
+换句话说，**v0.9 解决“读这份财报”，v1.0 alpha.1 新增的是“发现新报告、完整留档、判断要不要进入 Thesis 检查”这一整段前置流程。**
 
 你先在 AgenticThesis 中写下：
 
@@ -100,16 +113,14 @@ AGENTIC_THESIS_SEC_USER_AGENT="AgenticThesis your-email@example.com"
 
 ### 2. 启动应用
 
-```bash
-uvx agentic-thesis==0.9.0 serve
-```
+最新发布版可用 `uvx agentic-thesis==0.9.0 serve` 启动。要运行当前 v1.0 alpha，请使用下面的开发安装步骤。
 
 打开 [http://127.0.0.1:8000](http://127.0.0.1:8000)。首次启动已经准备好一份 Apple 示例和两份公司报告。你保存的理由、原始资料、vector index、历史检查、待确认结果和已经批准的更新都会保存在 `~/.agentic-thesis/`，关闭并重新启动后仍可继续使用。
 
-v0.9 使用新的本地 schema，且有意不迁移早期版本数据。请把已有 data directory 留作备份，并让 v0.9 使用一个新目录：
+当前 `main` 使用全新的 v1.0 schema；它会拒绝所有 pre-v1.0 data directory，且不会修改旧数据。请使用新目录：
 
 ```bash
-uvx agentic-thesis==0.9.0 serve --data-dir ~/.agentic-thesis-v09
+agentic-thesis serve --data-dir ~/.agentic-thesis-v10-alpha
 ```
 
 在浏览器中输入公司名称、为什么持有或关注它的股票、这条理由为什么重要，以及一个能够证明这条理由错误的事实，即可添加新的公司，不需要理解 JSON 或内部 schema。
@@ -209,6 +220,7 @@ await engine.close()
 
 | 边界 | 职责 | 实现 |
 | --- | --- | --- |
+| 证据采集 | 先把公司新交的正式文件原样保存，再交给 AI 解读 | 公司提交记录（disclosure event）、SEC 文件目录页、正式报告与附件的原始 bytes、SHA-256 内容指纹、解析结果、下载失败明细和每次检查记录 |
 | 接口 | 管理 theses 和 disclosures、检查指定 SEC filing types、异步启动任务、重放进度并接受审核决定 | FastAPI、后台 `asyncio` tasks、durable SSE |
 | 检索 | 在当前 run 绑定的 disclosure 中找到与 claim 相关的上下文 | 由完整句子、列表项和带上下文表格行组成的确定性结构化窗口；claim 和 falsifier query；BM25、本地持久化 Qdrant vector、RRF 和条件式 API rerank |
 | Working Context | 为每条 claim 提供最小、充分、可定位来源的证据 | query-conditioned `EvidencePack`，在每条 claim 的 2,000-token 预算内装入完整 citation span，并保存绑定 span 的 evidence ID 和精确原文偏移 |
@@ -223,7 +235,10 @@ await engine.close()
 
 ## 已实现能力
 
-- 确定性的 SEC HTML 提取：排除隐藏 inline-XBRL metadata，并保留 section、句子、列表和表格行结构；
+- 自动读取 SEC 网页版公司报告，去掉藏在页面里、对阅读无用的机器标签，同时保留章节、完整句子、列表和表格结构；
+- 每次发现新报告，都原样保存 SEC 文件目录页、正式报告、重要附件和机器可读的财务数据文件（XML/XBRL），并记录来源、文件类型、内容指纹和是否解析成功；
+- 记住上次检查到哪一份报告；需要时会翻查 SEC 历史页面。某个附件下载失败也会单独留下失败记录，不会抹掉已经成功取得的材料；
+- 每份新报告都会留下 Radar 结果：有可读内容则进入待审核流程（`needs_review`），没有则只记录发现（`digest`）；
 - 由完整 citation span 组成、而不是按 token count 截断的有界 retrieval windows，带稳定 ID 和精确 canonical offset；
 - claim 与 falsifier 共同检索：BM25 + 持久化 Qdrant vector retrieval 和 Reciprocal Rank Fusion；只有新增 window 才调用 embedding，且只有 BM25/vector top-1 不同且 top-3 交集少于 2 个 window 时才调用 listwise API reranking；
 - 带硬性 token budget、完整 span 选择、来源覆盖和 retained evidence ID 的 extractive Context packing；
@@ -234,7 +249,7 @@ await engine.close()
 - 一份 disclosure 对应一个 run 的执行模型、类型化并持久化的 `ThesisRun` 结果，以及可查询的已提交 `ThesisRevision` 历史；
 - 可持久化的 run history，以及通过 `Last-Event-ID` 跨浏览器或服务重启重放的顺序化 SSE；
 - 多个相互隔离的 theses，以及手工 HTML/TXT disclosure 导入；
-- 每个 thesis 一个官方 SEC EDGAR monitor，可选择 filing types，按 accession/content 去重，支持手工 sync 和持久化的每日收集 schedule；
+- 每个 Thesis 可以盯住一家公司在 SEC 发布的新文件；你可以选择要看的报告类型，系统会识别重复文件，并支持手工立即检查和每日自动检查；
 - 异步 FastAPI、后台任务、有界且带 timeout 的模型调用、停止服务后的 checkpoint 恢复，以及不暴露 chain-of-thought 的实时 LangGraph events；
 - 无前端依赖的产品页面，提供 guided company-reason editor，并支持 disclosure 管理、进度、引用、Context 压缩和 Human Review；
 - 可安装的 `agentic-thesis serve` CLI、package sample data 和稳定的用户数据目录。
@@ -245,7 +260,7 @@ await engine.close()
 
 | 检查项 | 观测结果 |
 | --- | ---: |
-| 测试 | 21 passed |
+| 测试 | 23 passed |
 | Wheel build | passed |
 | 2023 提取 tokens / retrieval windows | 48,777 / 111 |
 | 2024 提取 tokens / retrieval windows | 48,903 / 112 |
@@ -311,7 +326,7 @@ curl -X PUT http://localhost:8000/theses/aapl-primary/monitor \
 curl -X POST http://localhost:8000/theses/aapl-primary/sync
 ```
 
-第一次成功检查只导入最新一份符合条件的 Filing，用它建立 cursor，不自动回填全部历史。服务启动时判断是否到期，运行期间每小时只检查一次本地 due state；自动收集只在距离上次成功收集满 24 小时后访问 SEC，“Check SEC now”仍可手工强制检查。失败不会推进成功时间，会在下一次小时检查时重试。没有新 Filing 就不运行 RAG 或 LLM；每份新 Filing 都会启动一个只绑定该 disclosure 的 `ThesisDelta` workflow，并停在 Human Review。
+第一次成功检查只导入最新一份符合条件的公司文件，并记住它的 SEC 唯一编号；不会突然把多年的旧报告全部塞进来。以后每次检查只寻找排在它之后的新文件；如果这条记录不在最新列表里，系统会继续翻查 SEC 历史页面。你可以通过 `/events`、`/artifacts`、`/collection-attempts` 和 `/radar` 查看发现了什么、保存了哪些原始文件、缺了哪些附件，以及为什么决定进入或跳过 Thesis 检查。检查失败时不会假装成功，也不会跳过下次重试；每份有可读正文的新报告都会单独启动一次 `ThesisDelta` workflow，并停在 Human Review 等你确认。
 
 浏览器还可以创建和列出 theses、导入和列出 disclosures、查看历史 runs，并重新打开待审核任务。自动生成的 `/docs` 页面记录同一套 HTTP API。
 
@@ -324,15 +339,15 @@ curl -X POST http://localhost:8000/theses/aapl-primary/sync
   tests/test_mvp.py::test_langgraph_resumes_after_restart_and_rejects_stale_commit
 ```
 
-该场景会在 Human Review 暂停任务，关闭并使用同一个 SQLite 数据库重新创建 Workflow，以相同 run ID 恢复并提交 Thesis v2；随后它会在另一个任务暂停期间推进权威 thesis head，并验证旧任务的批准操作返回 HTTP 409。整个测试不会调用外部模型。
+该场景会在 Human Review 暂停任务，关闭并使用同一套本地持久化数据重新创建 Workflow，以相同 run ID 恢复并提交 Thesis v2；随后它会在另一个任务暂停期间推进权威 thesis head，并验证旧任务的批准操作返回 HTTP 409。业务状态与 LangGraph checkpoint 使用独立的 SQLite 文件，以避免写入锁竞争。整个测试使用确定性的 fake retrieval 与 analysis，不会调用外部模型。
 
 ## 明确边界
 
-- 自动 ingestion 有意只支持官方 SEC EDGAR submissions，不做新闻、社交媒体或公司 IR 网站爬虫；
+- v1.0 alpha.1 目前只会自动盯住 SEC EDGAR；公司官网的投资者关系（IR）页面、PDF/OCR、电话会文字稿和新闻线索还没有接入；
 - scheduler 只是一个每小时判断本地 due state、每 24 小时最多自动成功访问 SEC 一次的进程内 `asyncio` loop，不是分布式任务系统或通知服务；
 - Qdrant 以 embedded 模式运行，并把 vectors 持久化到用户数据目录；SQLite 持久化 Workflow 和 Thesis 状态；
 - 不预测股价，不建议应该投入多少钱，也没有 Multi-Agent role、distributed scheduler 或 queue；
-- 检索 gold set 包含 Apple 两份 filing 的 26 条问题；四条 Thesis delta case 已加入 Microsoft，但仍缺少更广的公司覆盖和一份已完成的当前 v0.9 live API 结果；
+- 检索 gold set 包含 Apple 两份 filing 的 26 条问题；四条 Thesis delta case 已加入 Microsoft，但仍缺少更广的公司覆盖和一份已完成的当前 v1.0 alpha live API 结果；
 - 没有实测 throughput、p50、p95 或 production-readiness 声明。
 
 ## 开源协议

@@ -15,20 +15,33 @@
 
 <h2 align="center">Let every new company report challenge your investment thesis.</h2>
 
-AgenticThesis is an open-source agentic thesis-intelligence system for investors who are willing to state why they own or follow a company—and what would prove them wrong. Whether you learned investing on your own or work in finance matters less than caring about the business behind the stock and revisiting your judgment when the facts change.
+AgenticThesis is an open-source AI agent that tests your investment thesis (why you own a stock) against new company filings—with exact citations, human review, and version history.
 
-It continuously reads official company reports, compares new evidence with your reasons and the conditions that would disprove them, and proposes an evidence-linked update to your thesis. Every proposal shows the exact source text and waits for Human Review before entering the versioned thesis history.
+**Built for investors who care about the business behind the stock—whatever their investing style.**
+
+You may rely mainly on company research or combine it with price trends, market events, or other methods. AgenticThesis does not ask you to join an investing school. It focuses on one job: checking whether new company evidence supports, weakens, or overturns the reasons you wrote down.
+
+You record those reasons and what would prove each one wrong. AgenticThesis continuously reads official company reports, proposes evidence-linked updates, and shows the exact source text. Nothing enters the versioned thesis history until you review and approve it.
 
 > AgenticThesis does not just tell you what changed at a company. It shows how new evidence changes your thesis—and requires you to approve that change.
 
-> **Status: Alpha.** Public interfaces may change before 1.0.
+> **Status: v1.0 alpha development.** The latest PyPI release remains v0.9.0.
 
 The same Python distribution provides two entry points:
 
 - `agentic-thesis serve` runs the self-hosted application with SQLite and embedded Qdrant;
 - `AgenticThesisEngine` is the supported interface for Python applications.
 
-In v0.9, the engine reads the report's headings, paragraphs, lists, and tables instead of chopping it every N tokens. Retrieval gets enough surrounding text to work well, while every citation shown to a person remains one complete sentence, list item, or table row. It searches both the saved reason and the facts that would prove that reason wrong.
+### What does v1.0 alpha.1 actually add?
+
+**v0.9 was closer to a filing reader: you supplied a report, and it checked that report against your reasons for owning the company. v1.0 alpha.1 starts turning it into a radar that watches for new official information.**
+
+- It remembers the last SEC filing it checked and processes only newer filings. If that filing has fallen off the latest list, it searches the older SEC pages to find it;
+- it preserves the SEC file listing, official report, important attachments, and XML data exactly as received, together with their source, content fingerprint, and parsing result;
+- if one attachment fails to download, the successfully collected material remains usable and the missing attachment and error stay visible;
+- each new filing goes through Radar first: readable text starts the existing thesis workflow and waits for Human Review; a filing without readable text is recorded without forcing the AI to reach a conclusion.
+
+In short, **v0.9 handled “read this filing”; v1.0 alpha.1 adds the preceding “find new filings, preserve the complete source record, and decide whether thesis review should start” workflow.**
 
 AgenticThesis lets you write down:
 
@@ -100,16 +113,14 @@ AGENTIC_THESIS_SEC_USER_AGENT="AgenticThesis your-email@example.com"
 
 ### 2. Start the application
 
-```bash
-uvx agentic-thesis==0.9.0 serve
-```
+The latest published release can be started with `uvx agentic-thesis==0.9.0 serve`. Use the development setup below to run the current v1.0 alpha code.
 
 Open [http://127.0.0.1:8000](http://127.0.0.1:8000). The first start includes a ready-to-use Apple example and two company reports. Your saved reasons, source documents, vector index, checks, pending reviews, and approved updates remain under `~/.agentic-thesis/` after you close and restart the app.
 
-v0.9 uses a new local schema and intentionally does not migrate earlier data. Keep an existing data directory as a backup and start v0.9 with a fresh directory:
+Current `main` uses a clean v1.0 schema and rejects every pre-v1.0 data directory without modifying it. Use a fresh directory:
 
 ```bash
-uvx agentic-thesis==0.9.0 serve --data-dir ~/.agentic-thesis-v09
+agentic-thesis serve --data-dir ~/.agentic-thesis-v10-alpha
 ```
 
 Add another company in the browser by entering why you own or follow its stock, why that reason matters, and one fact that would prove it wrong. No JSON or schema knowledge is required.
@@ -209,6 +220,7 @@ The system has one application-owned workflow, not a collection of autonomous ag
 
 | Boundary | Responsibility | Implementation |
 | --- | --- | --- |
+| Evidence ingestion | Preserve new official company files before asking AI to interpret them | company submission records (disclosure events), SEC file listings, raw report and attachment bytes, SHA-256 content fingerprints, parser outcomes, download failures, and records of every check |
 | Retrieval | Find claim-relevant context within the run's bound disclosure | deterministic structure-aware windows made from intact sentences, list items, and contextualized table rows; claim and falsifier queries; BM25, embedded persistent Qdrant vectors, RRF, and conditional API rerank |
 | Working Context | Give each claim the smallest sufficient, source-addressable evidence | query-conditioned `EvidencePack` that packs whole citation spans within a 2,000-token per-claim budget, with span-bound evidence IDs and exact source offsets |
 | Semantic analysis | Compare every thesis claim with supplied evidence only | API Structured Outputs → typed `ThesisDelta` |
@@ -222,7 +234,10 @@ The editable diagram source is [`docs/agentic-thesis-architecture.html`](docs/ag
 
 ## Implemented Capabilities
 
-- deterministic SEC HTML extraction that removes hidden inline-XBRL metadata and preserves section, sentence, list, and table-row structure;
+- automatic reading of SEC web filings that removes hidden machine-only tags while preserving sections, complete sentences, lists, and table structure;
+- exact preservation of each SEC file listing, official report, important attachment, and XML/XBRL file, together with its source, file type, content fingerprint, and parsing result;
+- memory of the last checked filing plus traversal of older SEC pages when needed; one failed attachment gets its own error record without discarding material already collected;
+- one saved Radar outcome for every new filing: readable material enters review (`needs_review`), while a filing without readable material is only recorded (`digest`);
 - bounded retrieval windows made from intact citation spans rather than token-count slicing, with stable IDs and exact canonical offsets;
 - claim-and-falsifier retrieval through BM25 + persistent Qdrant vectors and Reciprocal Rank Fusion; only new windows are embedded, with listwise API reranking only when BM25/vector top-1 differ and top-3 overlap is below 2;
 - extractive Context packing with a hard token budget, whole-span selection, source coverage, and retained evidence IDs;
@@ -233,7 +248,7 @@ The editable diagram source is [`docs/agentic-thesis-architecture.html`](docs/ag
 - one-disclosure-per-run execution with typed, durable `ThesisRun` outcomes and queryable committed `ThesisRevision` history;
 - persistent run history and sequenced SSE replay with `Last-Event-ID` across browser or service restarts;
 - multiple isolated theses plus manual HTML/TXT disclosure import;
-- one official-source SEC EDGAR monitor per thesis, selected filing types, accession/content deduplication, manual sync, and a persisted daily collection schedule;
+- one SEC watcher per thesis, selectable report types, duplicate detection, manual “check now,” and a persisted daily check;
 - async FastAPI, background runs, bounded/timeout-wrapped model calls, checkpoint recovery after shutdown, and live LangGraph events without chain-of-thought;
 - a dependency-free product page with a guided company-reason editor, disclosure management, progress, citations, Context compression, and Human Review;
 - an installable `agentic-thesis serve` CLI with packaged sample data and a stable user data directory.
@@ -244,7 +259,7 @@ Observed on the checked-in fixtures on 2026-09-04:
 
 | Check | Observed result |
 | --- | ---: |
-| Tests | 21 passed |
+| Tests | 23 passed |
 | Wheel build | passed |
 | 2023 extracted tokens / retrieval windows | 48,777 / 111 |
 | 2024 extracted tokens / retrieval windows | 48,903 / 112 |
@@ -310,7 +325,7 @@ curl -X PUT http://localhost:8000/theses/aapl-primary/monitor \
 curl -X POST http://localhost:8000/theses/aapl-primary/sync
 ```
 
-The first successful check imports only the latest selected filing, establishing a cursor without historical backfill. The service checks whether collection is due when it starts and then hourly while running. Automatic SEC collection occurs only when the last successful collection is at least 24 hours old; “Check SEC now” remains a manual override. A failed collection does not advance that timestamp and is retried on the next hourly check. No new filing means no RAG or LLM run; each new filing starts its own disclosure-bound `ThesisDelta` workflow that still stops at Human Review.
+The first successful check imports only the latest matching company filing and remembers its unique SEC identifier; it does not suddenly load years of history. Later checks look only for newer filings and search older SEC pages if the remembered filing has fallen off the latest list. `/events`, `/artifacts`, `/collection-attempts`, and `/radar` show what was found, which original files were preserved, which attachments were missed, and why thesis review did or did not start. A failed check is not recorded as a success, so the next check can retry. Every new filing with readable text starts its own `ThesisDelta` workflow and stops at Human Review.
 
 The browser can also create/list theses, import/list disclosures, list historical runs, and reopen pending reviews. The generated `/docs` page documents the same HTTP API.
 
@@ -323,15 +338,15 @@ Use the product page for the normal filing → evidence → review path. Then ru
   tests/test_mvp.py::test_langgraph_resumes_after_restart_and_rejects_stale_commit
 ```
 
-That scenario pauses a run at Human Review, closes and recreates the workflow on the same SQLite database, resumes the same run ID into Thesis v2, then advances the authoritative head while another run is paused and verifies that its stale approval returns HTTP 409. It uses deterministic fake retrieval and analysis, so it does not call an external model.
+That scenario pauses a run at Human Review, closes and recreates the workflow on the same local persistence set, resumes the same run ID into Thesis v2, then advances the authoritative head while another run is paused and verifies that its stale approval returns HTTP 409. Application state and LangGraph checkpoints use separate SQLite files to avoid writer contention. The test uses deterministic fake retrieval and analysis, so it does not call an external model.
 
 ## Deliberate limits
 
-- automatic ingestion is intentionally limited to official SEC EDGAR submissions; no news, social media, or investor-relations crawlers;
+- v1.0 alpha.1 currently watches only SEC EDGAR; company IR pages, PDF/OCR, call transcripts, and news leads are not connected yet;
 - the scheduler is one in-process `asyncio` loop that checks due state hourly and automatically performs successful SEC collection at most once per 24 hours; it is not a distributed job system or notification service;
 - Qdrant runs embedded and persists vectors under the user data directory; SQLite persists workflow and thesis state;
 - no share-price prediction, advice about how much money to put into a company, Multi-Agent roles, distributed scheduler, or queue;
-- the retrieval gold set contains 26 Apple questions across two filings; the four-case thesis-delta set adds Microsoft, but broader issuer coverage and a completed current v0.9 live API result are still missing;
+- the retrieval gold set contains 26 Apple questions across two filings; the four-case thesis-delta set adds Microsoft, but broader issuer coverage and a completed current v1.0 alpha live API result are still missing;
 - no measured throughput, p50, p95, or production-readiness claim.
 
 ## License

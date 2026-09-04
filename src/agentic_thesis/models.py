@@ -21,6 +21,31 @@ class RunStatus(StrEnum):
     INVALID_REVIEW = "invalid_review"
 
 
+class SourceAuthority(StrEnum):
+    REGULATOR = "regulator"
+    ISSUER = "issuer"
+    SECONDARY = "secondary"
+    USER_SUPPLIED = "user_supplied"
+
+
+class ParseStatus(StrEnum):
+    PARSED = "parsed"
+    RETAINED = "retained"
+    UNSUPPORTED = "unsupported"
+    FAILED = "failed"
+
+
+class CollectionStatus(StrEnum):
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+
+
+class RadarOutcome(StrEnum):
+    NEEDS_REVIEW = "needs_review"
+    DIGEST = "digest"
+    IGNORED = "ignored"
+
+
 class ThesisClaim(BaseModel):
     claim_id: str
     statement: str
@@ -42,6 +67,7 @@ class CitationSpan(BaseModel):
     text: str
     start_char: int
     end_char: int
+    page_number: int | None = None
 
 
 class DisclosureChunk(BaseModel):
@@ -53,6 +79,8 @@ class DisclosureChunk(BaseModel):
     start_char: int
     end_char: int
     source_url: str = ""
+    artifact_id: str = ""
+    page_number: int | None = None
     citation_spans: list[CitationSpan] = Field(default_factory=list)
 
 
@@ -63,6 +91,8 @@ class DisclosureDocument(BaseModel):
     filing_date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
     source_url: str = ""
     content: str = Field(min_length=1, max_length=10_000_000)
+    event_id: str | None = None
+    artifact_ids: list[str] = Field(default_factory=list)
 
 
 class DisclosureSummary(BaseModel):
@@ -71,6 +101,90 @@ class DisclosureSummary(BaseModel):
     accession: str
     filing_date: str
     source_url: str = ""
+    event_id: str | None = None
+
+
+class DisclosureEvent(BaseModel):
+    event_id: str = Field(min_length=1, max_length=200)
+    thesis_id: str = Field(min_length=1, max_length=200)
+    source: str = Field(min_length=1, max_length=100)
+    authority: SourceAuthority
+    event_type: str = Field(min_length=1, max_length=100)
+    external_id: str = Field(min_length=1, max_length=300)
+    filing_date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+    published_at: str | None = None
+    accepted_at: str | None = None
+    amended_event_id: str | None = None
+    metadata: dict[str, str] = Field(default_factory=dict)
+
+
+class ArtifactInput(BaseModel):
+    role: str = Field(min_length=1, max_length=100)
+    source_url: str = Field(min_length=1, max_length=2_000)
+    media_type: str = Field(
+        min_length=3,
+        max_length=200,
+        pattern=r"^[A-Za-z0-9!#$&^_.+-]+/[A-Za-z0-9!#$&^_.+-]+(?:\s*;[^\r\n]*)?$",
+    )
+    content: bytes = Field(min_length=1, max_length=10_000_000, repr=False)
+
+
+class SourceArtifact(BaseModel):
+    artifact_id: str
+    event_id: str
+    role: str
+    source_url: str
+    media_type: str
+    content_hash: str
+    byte_length: int
+    retrieved_at: str
+    parser_name: str | None = None
+    parser_version: str | None = None
+    parse_status: ParseStatus
+    parse_error: str | None = None
+
+
+class ArtifactFetchFailure(BaseModel):
+    event_id: str
+    role: str
+    source_url: str
+    error: str
+    occurred_at: str
+
+
+class IngestionResult(BaseModel):
+    event_id: str
+    document_id: str | None = None
+    artifact_ids: list[str]
+    chunk_count: int
+    event_created: bool
+    disclosure_created: bool
+
+
+class CollectionAttempt(BaseModel):
+    attempt_id: str
+    thesis_id: str
+    source: str
+    status: CollectionStatus
+    started_at: str
+    completed_at: str
+    cursor_before: str | None = None
+    cursor_after: str | None = None
+    imported: int = 0
+    error: str | None = None
+
+
+class RadarEntry(BaseModel):
+    radar_id: str
+    thesis_id: str
+    event_id: str
+    outcome: RadarOutcome
+    reason_codes: list[str] = Field(default_factory=list)
+    matched_claim_ids: list[str] = Field(default_factory=list)
+    matched_falsifiers: list[str] = Field(default_factory=list)
+    run_id: str | None = None
+    policy_version: str
+    created_at: str
 
 
 class EvidenceItem(BaseModel):
@@ -81,6 +195,8 @@ class EvidenceItem(BaseModel):
     section: str
     kind: Literal["sentence", "list_item", "table_row"]
     source_url: str
+    artifact_id: str = ""
+    page_number: int | None = None
     start_char: int
     end_char: int
     source_start_char: int

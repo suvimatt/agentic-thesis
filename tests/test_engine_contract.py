@@ -1,17 +1,22 @@
 import asyncio
 import sqlite3
+from datetime import datetime, timezone
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
 from agentic_thesis import (
     AgenticThesisEngine,
+    ArtifactFetchFailure,
+    ArtifactInput,
     ClaimDelta,
     DeltaStatus,
     DisclosureDocument,
+    DisclosureEvent,
     EngineConflictError,
     ReviewDecision,
     RunStatus,
+    SourceAuthority,
     ThesisClaim,
     ThesisDelta,
     ThesisSnapshot,
@@ -21,9 +26,10 @@ from agentic_thesis.rag import HybridRetriever
 
 
 @pytest.mark.asyncio
-async def test_v09_rejects_an_older_database_without_modifying_it(tmp_path) -> None:
+async def test_v1_rejects_a_pre_v1_database_without_modifying_it(tmp_path) -> None:
     database = tmp_path / "agentic_thesis.sqlite"
     with sqlite3.connect(database) as connection:
+        connection.execute("PRAGMA user_version = 9")
         connection.execute("CREATE TABLE runs (run_id TEXT PRIMARY KEY)")
 
     async def unused(*args):
@@ -41,6 +47,126 @@ async def test_v09_rejects_an_older_database_without_modifying_it(tmp_path) -> N
         assert connection.execute(
             "SELECT name FROM sqlite_master WHERE name = 'runs'"
         ).fetchone() == ("runs",)
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 9
+
+
+@pytest.mark.asyncio
+async def test_v1_ingestion_preserves_event_artifacts_and_partial_failures(tmp_path) -> None:
+    async def unused(*args):
+        raise AssertionError("model functions must not run")
+
+    engine = await AgenticThesisEngine.open_local(
+        tmp_path,
+        embed=unused,
+        rerank=unused,
+        analyze=unused,
+    )
+    thesis = ThesisSnapshot(
+        thesis_id="aapl-radar",
+        company="Apple Inc.",
+        version=1,
+        claims=[
+            ThesisClaim(
+                claim_id="demand",
+                statement="Demand remains durable.",
+                rationale="Demand supports cash generation.",
+                falsifiers=["Revenue declines materially."],
+            )
+        ],
+    )
+    await engine.create_thesis(thesis)
+    event = DisclosureEvent(
+        event_id="sec:0000320193-25-000079:aapl",
+        thesis_id=thesis.thesis_id,
+        source="sec-edgar",
+        authority=SourceAuthority.REGULATOR,
+        event_type="sec:8-K",
+        external_id="0000320193-25-000079",
+        filing_date="2025-08-01",
+        accepted_at="2025-08-01T16:05:00Z",
+        metadata={"form": "8-K", "cik": "0000320193"},
+    )
+    primary_url = "https://www.sec.gov/example/filing.htm"
+    result = await engine.ingest_event(
+        event,
+        [
+            ArtifactInput(
+                role="filing_index",
+                source_url="https://www.sec.gov/example/filing-index.html",
+                media_type="text/html",
+                content=b"<html><body>Filing index.</body></html>",
+            ),
+            ArtifactInput(
+                role="primary_document",
+                source_url=primary_url,
+                media_type="text/html",
+                content=b"<html><body>Revenue remained durable.</body></html>",
+            ),
+            ArtifactInput(
+                role="exhibit",
+                source_url="https://www.sec.gov/example/exhibit.htm",
+                media_type="text/html",
+                content=b"<html><body>Services revenue increased.</body></html>",
+            ),
+            ArtifactInput(
+                role="exhibit",
+                source_url="https://www.sec.gov/example/slides.pdf",
+                media_type="application/pdf",
+                content=b"%PDF-1.4 fixture",
+            ),
+        ],
+    )
+    assert result.event_created is True
+    assert result.disclosure_created is True
+    assert result.chunk_count == 2
+    assert (await engine.get_event(event.event_id)) == event
+    disclosure = await engine.get_disclosure(thesis.thesis_id, result.document_id)
+    assert disclosure.event_id == event.event_id
+    assert set(disclosure.artifact_ids) == set(result.artifact_ids)
+    artifacts = await engine.list_artifacts(event.event_id)
+    assert {item.role for item in artifacts} == {
+        "filing_index", "primary_document", "exhibit"
+    }
+    assert any(item.parse_status == "unsupported" for item in artifacts)
+    assert any(
+        item.role == "primary_document" and item.parse_status == "parsed"
+        for item in artifacts
+    )
+    primary = next(item for item in artifacts if item.role == "primary_document")
+    assert await engine.get_artifact_content(primary.artifact_id) == (
+        b"<html><body>Revenue remained durable.</body></html>",
+        "text/html",
+    )
+    changed = await engine.ingest_event(
+        event,
+        [
+            ArtifactInput(
+                role="primary_document",
+                source_url=primary_url,
+                media_type="text/html",
+                content=b"<html><body>Revenue declined materially.</body></html>",
+            )
+        ],
+    )
+    assert changed.event_created is False
+    assert changed.disclosure_created is False
+    assert len(await engine.list_artifacts(event.event_id)) == 5
+
+    now = datetime.now(timezone.utc).isoformat()
+    failure = ArtifactFetchFailure(
+        event_id=event.event_id,
+        role="exhibit",
+        source_url="https://www.sec.gov/example/missing.pdf",
+        error="timed out",
+        occurred_at=now,
+    )
+    await engine.record_artifact_failures([failure])
+    assert await engine.list_artifact_failures(event.event_id) == [failure]
+
+    with sqlite3.connect(tmp_path / "agentic_thesis.sqlite") as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 10
+        assert connection.execute("SELECT COUNT(*) FROM source_artifacts").fetchone()[0] == 5
+    await engine.close()
 
 
 @pytest.mark.asyncio
@@ -119,6 +245,7 @@ async def test_public_engine_runs_local_thesis_lifecycle(tmp_path) -> None:
     } == {"aapl-2024"}
     evidence = paused.evidence_packs[0].items[0]
     assert evidence.kind == "sentence"
+    assert evidence.artifact_id.startswith("sha256:")
     assert evidence.quote == "Services gross margin was 73.9 percent."
     assert evidence.source_text[
         evidence.start_char - evidence.source_start_char:

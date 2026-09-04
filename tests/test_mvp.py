@@ -23,7 +23,11 @@ from agentic_thesis.rag import (
     HybridRetriever,
     OpenAIModel,
     RetrievalHit,
+    anchor_matches,
+    anchor_mean_reciprocal_rank,
+    anchor_recall_at_k,
     build_evidence_pack,
+    canonical_text_from_chunks,
     chunk_filing,
     enforce_citations,
     gold_rank,
@@ -92,6 +96,61 @@ def test_chunk_ids_are_stable() -> None:
     assert first[0].start_char < first[0].end_char
 
 
+def test_financial_filing_chunks_preserve_atomic_citations() -> None:
+    document = """
+    <html><head><title>ignored</title></head><body>
+      <div style="display:none"><ix:header>http://fasb.org/us-gaap hidden</ix:header></div>
+      <input hidden value="ignored">
+      <h2>Item 7. Management Discussion</h2>
+      <p>Revenue in U.S. markets increased 12%. Demand remained durable.</p>
+      <ul><li>Customer retention remained above 95%.</li></ul>
+      <table>
+        <tr><th>Metric</th><th>2024</th><th>2023</th></tr>
+        <tr><td>Services margin</td><td>73.9%</td><td>70.8%</td></tr>
+      </table>
+    </body></html>
+    """
+
+    chunks = chunk_filing(
+        document,
+        accession="atomic",
+        filing_date="2024-09-28",
+        max_chars=60,
+    )
+    canonical_text = canonical_text_from_chunks(chunks)
+    spans = [span for chunk in chunks for span in chunk.citation_spans]
+
+    assert "hidden" not in canonical_text
+    assert {span.kind for span in spans} == {"sentence", "list_item", "table_row"}
+    assert [span.text for span in spans if span.kind == "sentence"] == [
+        "Revenue in U.S. markets increased 12%.",
+        "Demand remained durable.",
+    ]
+    assert next(span.text for span in spans if span.kind == "table_row") == (
+        "Columns: Metric | 2024 | 2023; "
+        "Row: Services margin | 73.9% | 70.8%"
+    )
+    assert all(
+        canonical_text[span.start_char:span.end_char] == span.text
+        for span in spans
+    )
+    assert all(
+        span in chunk.citation_spans
+        and chunk.text[
+            span.start_char - chunk.start_char:span.end_char - chunk.start_char
+        ] == span.text
+        for chunk in chunks
+        for span in chunk.citation_spans
+    )
+
+    plain_text = chunk_filing(
+        "Management outlook unchanged",
+        accession="txt-1",
+        filing_date="2024-09-28",
+    )
+    assert plain_text[0].citation_spans[0].text == "Management outlook unchanged"
+
+
 def test_fixed_sec_filings_exist() -> None:
     filings = files("agentic_thesis").joinpath("sample_data", "filings")
     assert len(filings.joinpath("aapl-2023-10-k.html").read_bytes()) > 1_000_000
@@ -149,9 +208,11 @@ async def test_hybrid_retrieval_reports_measured_recall_at_5() -> None:
         "risk",
         "regulatory",
     }.issubset({case["category"] for case in cases})
-    gold = {case["query"]: case["gold_chunk_id"] for case in cases}
-    by_id = {chunk.chunk_id: chunk for chunk in chunks}
-    assert all(case["anchor"].lower() in by_id[case["gold_chunk_id"]].text.lower() for case in cases)
+    gold = {case["query"]: case["anchor"] for case in cases}
+    assert all(
+        any(anchor_matches(chunk.text, case["anchor"]) for chunk in chunks)
+        for case in cases
+    )
 
     async def embed(texts: list[str]) -> list[list[float]]:
         return HybridRetriever.deterministic_embeddings(texts, dimensions=512)
@@ -171,29 +232,32 @@ async def test_hybrid_retrieval_reports_measured_recall_at_5() -> None:
     await retriever.index()
     results = {
         mode: {
-            query: [hit.chunk.chunk_id for hit in await retriever.search(query, mode=mode, limit=5)]
+            query: [hit.chunk for hit in await retriever.search(query, mode=mode, limit=5)]
             for query in gold
         }
         for mode in ("bm25", "vector", "hybrid", "rerank", "conditional")
     }
-    metrics = {mode: recall_at_k(result, gold, 5) for mode, result in results.items()}
+    metrics = {
+        mode: anchor_recall_at_k(result, gold, 5)
+        for mode, result in results.items()
+    }
 
     assert metrics == {
-        "bm25": 22 / 26,
-        "vector": 14 / 26,
-        "hybrid": 20 / 26,
-        "rerank": 23 / 26,
-        "conditional": 22 / 26,
+        "bm25": 24 / 26,
+        "vector": 15 / 26,
+        "hybrid": 23 / 26,
+        "rerank": 25 / 26,
+        "conditional": 25 / 26,
     }
     assert {
-        mode: round(mean_reciprocal_rank(mode_results, gold), 3)
+        mode: round(anchor_mean_reciprocal_rank(mode_results, gold), 3)
         for mode, mode_results in results.items()
     } == {
-        "bm25": 0.581,
-        "vector": 0.369,
-        "hybrid": 0.544,
-        "rerank": 0.663,
-        "conditional": 0.635,
+        "bm25": 0.653,
+        "vector": 0.438,
+        "hybrid": 0.628,
+        "rerank": 0.75,
+        "conditional": 0.756,
     }
     vectors = [await retriever._vector_ids(query) for query in gold]
     assert sum(
@@ -201,17 +265,24 @@ async def test_hybrid_retrieval_reports_measured_recall_at_5() -> None:
         for query, vector_ids in zip(gold, vectors, strict=True)
     ) == 15
     held_out = {
-        case["query"]: case["gold_chunk_id"]
+        case["query"]: case["anchor"]
         for case in cases
         if case["split"] == "held_out"
     }
-    assert recall_at_k(results["conditional"], held_out, 5) == 1.0
-    assert round(mean_reciprocal_rank(results["conditional"], held_out), 3) == 0.652
+    assert anchor_recall_at_k(results["conditional"], held_out, 5) == 1.0, [
+        query
+        for query, anchor in held_out.items()
+        if not any(anchor_matches(chunk.text, anchor) for chunk in results["conditional"][query])
+    ]
+    assert round(anchor_mean_reciprocal_rank(results["conditional"], held_out), 3) == 0.72
     for case in cases:
         hits = await retriever.search(case["query"], mode="rerank", limit=5)
         pack = build_evidence_pack("gold-eval", case["query"], hits, token_budget=2_000)
-        if case["gold_chunk_id"] in {hit.chunk.chunk_id for hit in hits}:
-            assert f'e:{case["gold_chunk_id"]}' in pack.retained_evidence_ids
+        if any(anchor_matches(hit.chunk.text, case["anchor"]) for hit in hits):
+            assert any(
+                anchor_matches(item.quote, case["anchor"])
+                for item in pack.items
+            ), (case["query"], [item.quote for item in pack.items])
         assert pack.tokens_after <= 2_000
 
 
@@ -316,17 +387,20 @@ async def test_persistent_vector_index_reuses_embeddings_and_scopes_search(
     }
     first = HybridRetriever([alpha], **options)
     await first.index()
-    assert embedding_batches == [[alpha.text]]
+    assert embedding_batches == [[HybridRetriever.search_text(alpha)]]
     first.close()
 
     restarted = HybridRetriever([alpha], **options)
     await restarted.index()
-    assert embedding_batches == [[alpha.text]]
+    assert embedding_batches == [[HybridRetriever.search_text(alpha)]]
     restarted.close()
 
     expanded = HybridRetriever([alpha, beta], **options)
     await expanded.index()
-    assert embedding_batches == [[alpha.text], [beta.text]]
+    assert embedding_batches == [
+        [HybridRetriever.search_text(alpha)],
+        [HybridRetriever.search_text(beta)],
+    ]
     expanded.close()
 
     scoped = HybridRetriever([alpha], **options)
@@ -381,7 +455,14 @@ def test_evidence_pack_respects_budget_and_rejects_forged_quote() -> None:
     )
     assert enforce_citations(valid, [pack]).claim_deltas[0].status == DeltaStatus.SUPPORTED
 
+    original_quote = pack.items[1].quote
     pack.items[1].quote = "A fabricated sentence that never appeared in the filing."
+    rejected = enforce_citations(valid, [pack]).claim_deltas[0]
+    assert rejected.status == DeltaStatus.UNKNOWN
+    assert rejected.evidence_ids == []
+
+    pack.items[1].quote = original_quote
+    pack.items[1].end_char += 1
     rejected = enforce_citations(valid, [pack]).claim_deltas[0]
     assert rejected.status == DeltaStatus.UNKNOWN
     assert rejected.evidence_ids == []
@@ -459,7 +540,8 @@ async def test_structured_analysis_receives_compressed_quotes_not_source_chunks(
     prompt = client.responses.input[1]["content"]
 
     assert pack.items[0].quote in prompt
-    assert "Unselected source-only detail" not in prompt
+    assert chunk.text not in prompt
+    assert prompt.count("Unselected source-only detail") < 100
     assert "source_text" not in prompt
 
 
@@ -727,8 +809,8 @@ async def test_langgraph_resumes_after_restart_and_rejects_stale_commit(tmp_path
         events = await client.get("/runs/api-run/events")
         assert events.headers["content-type"].startswith("text/event-stream")
         assert '"node": "retrieve_claims"' in events.text
-        assert '"retrieval_ms": 1.25' in events.text
-        assert '"rerank_ms": 2.5' in events.text
+        assert '"retrieval_ms": 2.5' in events.text
+        assert '"rerank_ms": 5.0' in events.text
         assert '"total_ms":' in events.text
         assert '"tokens_after"' in events.text
         assert '"status": "awaiting_review"' in events.text

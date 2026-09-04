@@ -36,6 +36,14 @@ class ThesisSnapshot(BaseModel):
     claims: list[ThesisClaim]
 
 
+class CitationSpan(BaseModel):
+    span_id: str
+    kind: Literal["sentence", "list_item", "table_row"]
+    text: str
+    start_char: int
+    end_char: int
+
+
 class DisclosureChunk(BaseModel):
     chunk_id: str
     accession: str
@@ -45,6 +53,7 @@ class DisclosureChunk(BaseModel):
     start_char: int
     end_char: int
     source_url: str = ""
+    citation_spans: list[CitationSpan] = Field(default_factory=list)
 
 
 class DisclosureDocument(BaseModel):
@@ -70,9 +79,12 @@ class EvidenceItem(BaseModel):
     accession: str
     filing_date: str
     section: str
+    kind: Literal["sentence", "list_item", "table_row"]
     source_url: str
     start_char: int
     end_char: int
+    source_start_char: int
+    source_end_char: int
     quote: str
     source_text: str
     score: float = 0.0

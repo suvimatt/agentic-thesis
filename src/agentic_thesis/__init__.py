@@ -2,6 +2,7 @@
 
 from agentic_thesis.engine import AgenticThesisEngine, EngineConflictError
 from agentic_thesis.models import (
+    CitationSpan,
     ClaimDelta,
     DeltaStatus,
     DisclosureChunk,
@@ -23,6 +24,7 @@ from agentic_thesis.models import (
 __all__ = [
     "AgenticThesisEngine",
     "EngineConflictError",
+    "CitationSpan",
     "ClaimDelta",
     "DeltaStatus",
     "DisclosureChunk",

@@ -72,14 +72,14 @@ class AgenticThesisWorkflow:
                 "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
             )
         ).fetchall()
-        if tables and version != 8:
+        if tables and version != 9:
             await connection.close()
             raise RuntimeError(
-                "AgenticThesis v0.8 requires an empty data directory; "
-                "v0.7 SQLite databases are not supported"
+                "AgenticThesis v0.9 requires an empty data directory; "
+                "older SQLite databases are not supported"
             )
         if not tables:
-            await connection.execute("PRAGMA user_version = 8")
+            await connection.execute("PRAGMA user_version = 9")
             await connection.commit()
         checkpoint_connection = await aiosqlite.connect(str(database))
         checkpointer = AsyncSqliteSaver(checkpoint_connection)
@@ -125,6 +125,7 @@ class AgenticThesisWorkflow:
                 source_url TEXT NOT NULL,
                 content_hash TEXT NOT NULL,
                 raw_text TEXT NOT NULL,
+                canonical_text TEXT NOT NULL,
                 chunks_json TEXT NOT NULL,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE (thesis_id, content_hash)
@@ -166,7 +167,14 @@ class AgenticThesisWorkflow:
             )
             await retriever.index()
         results = await asyncio.gather(
-            *[self._search(retriever, claim.statement) for claim in state.thesis.claims]
+            *[
+                self._retrieve_claim(
+                    retriever,
+                    claim.statement,
+                    claim.falsifiers,
+                )
+                for claim in state.thesis.claims
+            ]
         )
         return {
             "retrieved": {
@@ -192,6 +200,46 @@ class AgenticThesisWorkflow:
         async with self.model_calls, asyncio.timeout(45):
             return await retriever.search_with_timings(query, limit=6)
 
+    async def _retrieve_claim(
+        self,
+        retriever: Any,
+        statement: str,
+        falsifiers: list[str],
+    ) -> tuple[list[RetrievalHit], dict[str, float | bool]]:
+        queries = [statement]
+        if falsifiers:
+            queries.append("Evidence that would disprove the claim: " + " ".join(falsifiers))
+        results = await asyncio.gather(
+            *[self._search(retriever, query) for query in queries]
+        )
+        rankings = [
+            [hit.chunk.chunk_id for hit in hits]
+            for hits, _ in results
+        ]
+        fused = HybridRetriever.rrf(rankings, limit=6)
+        chunks = {
+            hit.chunk.chunk_id: hit.chunk
+            for hits, _ in results
+            for hit in hits
+        }
+        timings = {
+            "retrieval_ms": round(
+                sum(float(item.get("retrieval_ms", 0.0)) for _, item in results),
+                3,
+            ),
+            "rerank_ms": round(
+                sum(float(item.get("rerank_ms", 0.0)) for _, item in results),
+                3,
+            ),
+            "rerank_triggered": any(
+                bool(item.get("rerank_triggered", False)) for _, item in results
+            ),
+        }
+        return (
+            [RetrievalHit(chunks[chunk_id], score) for chunk_id, score in fused],
+            timings,
+        )
+
     async def _build_evidence_packs(self, state: ResearchState) -> dict[str, Any]:
         started = perf_counter()
         chunks = {chunk.chunk_id: chunk for chunk in state.chunks}
@@ -205,7 +253,7 @@ class AgenticThesisWorkflow:
             packs.append(
                 build_evidence_pack(
                     claim.claim_id,
-                    claim.statement,
+                    "\n".join([claim.statement, *claim.falsifiers]),
                     hits,
                     token_budget=2_000,
                 )
@@ -592,6 +640,7 @@ class AgenticThesisWorkflow:
     async def add_disclosure(
         self,
         document: DisclosureDocument,
+        canonical_text: str,
         chunks: list[DisclosureChunk],
     ) -> bool:
         content_hash = hashlib.sha256(document.content.encode()).hexdigest()
@@ -599,8 +648,8 @@ class AgenticThesisWorkflow:
             """
             INSERT OR IGNORE INTO disclosures
                 (document_id, thesis_id, accession, filing_date, source_url,
-                 content_hash, raw_text, chunks_json)
-            SELECT ?, ?, ?, ?, ?, ?, ?, ?
+                 content_hash, raw_text, canonical_text, chunks_json)
+            SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
             WHERE NOT EXISTS (
                 SELECT 1 FROM disclosures
                 WHERE thesis_id = ? AND accession = ?
@@ -614,6 +663,7 @@ class AgenticThesisWorkflow:
                 document.source_url,
                 content_hash,
                 document.content,
+                canonical_text,
                 json.dumps([chunk.model_dump(mode="json") for chunk in chunks]),
                 document.thesis_id,
                 document.accession,

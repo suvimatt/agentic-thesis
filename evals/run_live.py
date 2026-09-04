@@ -14,12 +14,13 @@ from agentic_thesis.rag import (
     HybridRetriever,
     OpenAIModel,
     RetrievalHit,
+    anchor_matches,
+    anchor_mean_reciprocal_rank,
+    anchor_rank,
+    anchor_recall_at_k,
     build_evidence_pack,
     chunk_filing,
     enforce_citations,
-    gold_rank,
-    mean_reciprocal_rank,
-    recall_at_k,
 )
 
 
@@ -76,8 +77,8 @@ async def main() -> None:
     index_ms = round((perf_counter() - started) * 1_000, 1)
 
     cases = json.loads((ROOT / "evals/gold.json").read_text())
-    gold = {case["query"]: case["gold_chunk_id"] for case in cases}
-    results: dict[str, dict[str, list[str]]] = {}
+    gold = {case["query"]: case["anchor"] for case in cases}
+    results: dict[str, dict[str, list[DisclosureChunk]]] = {}
     retrieval_ms: dict[str, float] = {}
     rerank_triggers: dict[str, int] = {"rerank": 0, "conditional": 0}
     for mode in ("bm25", "vector", "hybrid", "rerank", "conditional"):
@@ -93,7 +94,7 @@ async def main() -> None:
                 rerank_triggers[mode] += int(timings["rerank_triggered"])
             else:
                 hits = await retriever.search(query, mode=mode, limit=5)
-            results[mode][query] = [hit.chunk.chunk_id for hit in hits]
+            results[mode][query] = [hit.chunk for hit in hits]
         retrieval_ms[mode] = round((perf_counter() - started) * 1_000, 1)
 
     retained = 0
@@ -105,21 +106,44 @@ async def main() -> None:
             hits,
             token_budget=2_000,
         )
-        retained += f'e:{case["gold_chunk_id"]}' in pack.retained_evidence_ids
+        retained += any(anchor_matches(item.quote, case["anchor"]) for item in pack.items)
 
     thesis = ThesisSnapshot.model_validate_json(
         files("agentic_thesis").joinpath("sample_data", "thesis_v1.json").read_text()
     )
-    claim_hits = await asyncio.gather(
-        *[
-            retriever.search(claim.statement, mode="conditional", limit=6)
-            for claim in thesis.claims
+    async def retrieve_claim(claim) -> list[RetrievalHit]:
+        queries = [claim.statement]
+        if claim.falsifiers:
+            queries.append(
+                "Evidence that would disprove the claim: "
+                + " ".join(claim.falsifiers)
+            )
+        query_hits = await asyncio.gather(
+            *[
+                retriever.search(query, mode="conditional", limit=6)
+                for query in queries
+            ]
+        )
+        by_id = {
+            hit.chunk.chunk_id: hit.chunk
+            for hits in query_hits
+            for hit in hits
+        }
+        return [
+            RetrievalHit(by_id[chunk_id], score)
+            for chunk_id, score in HybridRetriever.rrf(
+                [[hit.chunk.chunk_id for hit in hits] for hits in query_hits],
+                limit=6,
+            )
         ]
+
+    claim_hits = await asyncio.gather(
+        *[retrieve_claim(claim) for claim in thesis.claims]
     )
     packs = [
         build_evidence_pack(
             claim.claim_id,
-            claim.statement,
+            "\n".join([claim.statement, *claim.falsifiers]),
             hits,
             token_budget=2_000,
         )
@@ -186,8 +210,8 @@ async def main() -> None:
             grouped[value] = {
                 mode: {
                     "cases": len(queries),
-                    "recall_at_5": recall_at_k(mode_results, group_gold, 5),
-                    "mrr": mean_reciprocal_rank(mode_results, group_gold),
+                    "recall_at_5": anchor_recall_at_k(mode_results, group_gold, 5),
+                    "mrr": anchor_mean_reciprocal_rank(mode_results, group_gold),
                 }
                 for mode, mode_results in results.items()
             }
@@ -202,11 +226,11 @@ async def main() -> None:
         "corpus_chunks": len(chunks),
         "gold_cases": len(cases),
         "recall_at_5": {
-            mode: recall_at_k(mode_results, gold, 5)
+            mode: anchor_recall_at_k(mode_results, gold, 5)
             for mode, mode_results in results.items()
         },
         "mrr": {
-            mode: mean_reciprocal_rank(mode_results, gold)
+            mode: anchor_mean_reciprocal_rank(mode_results, gold)
             for mode, mode_results in results.items()
         },
         "by_category": grouped_metrics("category"),
@@ -217,13 +241,13 @@ async def main() -> None:
             "conditional_calls": rerank_triggers["conditional"],
             "conditional_trigger_rate": rerank_triggers["conditional"] / len(cases),
         },
-        "rerank_gold_position": {
+        "rerank_anchor_position": {
             query: {
-                "hybrid": gold_rank(results["hybrid"][query], gold_id),
-                "rerank": gold_rank(results["rerank"][query], gold_id),
-                "conditional": gold_rank(results["conditional"][query], gold_id),
+                "hybrid": anchor_rank(results["hybrid"][query], anchor),
+                "rerank": anchor_rank(results["rerank"][query], anchor),
+                "conditional": anchor_rank(results["conditional"][query], anchor),
             }
-            for query, gold_id in gold.items()
+            for query, anchor in gold.items()
         },
         "gold_retention": {"retained": retained, "total": len(cases)},
         "timings_ms": {

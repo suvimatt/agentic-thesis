@@ -21,7 +21,7 @@ from agentic_thesis.rag import HybridRetriever
 
 
 @pytest.mark.asyncio
-async def test_v08_rejects_a_v07_database_without_modifying_it(tmp_path) -> None:
+async def test_v09_rejects_an_older_database_without_modifying_it(tmp_path) -> None:
     database = tmp_path / "agentic_thesis.sqlite"
     with sqlite3.connect(database) as connection:
         connection.execute("CREATE TABLE runs (run_id TEXT PRIMARY KEY)")
@@ -75,7 +75,10 @@ async def test_public_engine_runs_local_thesis_lifecycle(tmp_path) -> None:
         content="<h1>Gross Margin</h1><p>Services gross margin was 73.9 percent.</p>",
     )
 
+    embedded_texts: list[str] = []
+
     async def embed(texts: list[str]) -> list[list[float]]:
+        embedded_texts.extend(texts)
         return HybridRetriever.deterministic_embeddings(texts)
 
     async def rerank(query, candidates):
@@ -114,6 +117,20 @@ async def test_public_engine_runs_local_thesis_lifecycle(tmp_path) -> None:
         for pack in paused.evidence_packs
         for item in pack.items
     } == {"aapl-2024"}
+    evidence = paused.evidence_packs[0].items[0]
+    assert evidence.kind == "sentence"
+    assert evidence.quote == "Services gross margin was 73.9 percent."
+    assert evidence.source_text[
+        evidence.start_char - evidence.source_start_char:
+        evidence.end_char - evidence.source_start_char
+    ] == evidence.quote
+    assert any("Services margin declines" in text for text in embedded_texts)
+    with sqlite3.connect(tmp_path / "agentic_thesis.sqlite") as connection:
+        canonical_text = connection.execute(
+            "SELECT canonical_text FROM disclosures WHERE document_id = ?",
+            (disclosure.document_id,),
+        ).fetchone()[0]
+    assert canonical_text[evidence.start_char:evidence.end_char] == evidence.quote
     with pytest.raises(EngineConflictError, match="run already exists"):
         await engine.start_run(
             "aapl-2024-review", thesis.thesis_id, disclosure.document_id

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agentic-thesis"
-version = "0.7.0"
+version = "0.8.0"
 description = "An open-source, stateful engine for evidence-backed investment thesis monitoring."
 readme = "README.md"
 license = "AGPL-3.0-only"

@@ -18,22 +18,26 @@ from dotenv import load_dotenv
 from openai import AsyncOpenAI
 from pydantic import BaseModel, Field, field_validator
 
-from agentic_thesis.engine import AgenticThesisEngine
+from agentic_thesis.engine import AgenticThesisEngine, EngineConflictError
 from agentic_thesis.models import (
-    DisclosureChunk,
     DisclosureDocument,
+    DisclosureSummary,
     ReviewDecision,
+    RunStatus,
+    RunSummary,
+    SecMonitor,
+    ThesisRevision,
+    ThesisRun,
     ThesisSnapshot,
 )
-from agentic_thesis.rag import OpenAIModel, chunk_filing
+from agentic_thesis.rag import OpenAIModel
 from agentic_thesis.workflow import AgenticThesisWorkflow
 
 
 class StartRun(BaseModel):
     run_id: str
-    thesis_id: str | None = None
-    thesis: ThesisSnapshot | None = None
-    chunks: list[DisclosureChunk] | None = None
+    thesis_id: str
+    disclosure_id: str
 
 
 class SecMonitorInput(BaseModel):
@@ -104,24 +108,13 @@ class SecEdgarClient:
         return content.decode("utf-8", errors="ignore"), url
 
 
-def _public_state(run_id: str, state: dict) -> dict:
-    timings = state.get("timings_ms", {})
-    return jsonable_encoder(
-        {
-            "run_id": run_id,
-            "status": state.get("status", "running"),
-            "thesis": state.get("thesis"),
-            "delta": state.get("delta"),
-            "evidence_packs": state.get("evidence_packs", []),
-            "timings_ms": timings,
-            "retrieval_timings_ms": state.get("retrieval_timings_ms", {}),
-            "total_ms": round(sum(timings.values()), 3),
-            "error": state.get("error"),
-        }
-    )
+def _public_state(state: ThesisRun) -> dict:
+    payload = state.model_dump(mode="json")
+    payload["total_ms"] = round(sum(state.timings_ms.values()), 3)
+    return jsonable_encoder(payload)
 
 
-async def _default_engine() -> tuple[AgenticThesisEngine, ThesisSnapshot, list[DisclosureChunk]]:
+async def _default_engine() -> AgenticThesisEngine:
     data_dir = Path(
         os.getenv("AGENTIC_THESIS_DATA_DIR", Path.home() / ".agentic-thesis")
     ).expanduser()
@@ -150,16 +143,6 @@ async def _default_engine() -> tuple[AgenticThesisEngine, ThesisSnapshot, list[D
         accession: sample_data.joinpath("filings", filename).read_text(errors="ignore")
         for accession, _, filename, _ in filings
     }
-    chunks = [
-        chunk
-        for accession, filing_date, _, source_url in filings
-        for chunk in chunk_filing(
-            documents[accession],
-            accession=accession,
-            filing_date=filing_date,
-            source_url=source_url,
-        )
-    ]
     model = OpenAIModel(
         AsyncOpenAI(),
         embedding_client=AsyncOpenAI(
@@ -181,26 +164,27 @@ async def _default_engine() -> tuple[AgenticThesisEngine, ThesisSnapshot, list[D
         embed=model.embed,
         rerank=model.rerank,
         analyze=model.analyze,
-        initial_chunks=chunks,
         collection_name=collection_name,
     )
-    await engine.create_thesis(thesis)
+    if await engine.get_thesis(thesis.thesis_id) is None:
+        await engine.create_thesis(thesis)
     for accession, filing_date, _, source_url in filings:
-        await engine.add_disclosure(
-            DisclosureDocument(
-                document_id=accession,
-                thesis_id=thesis.thesis_id,
-                accession=accession,
-                filing_date=filing_date,
-                source_url=source_url,
-                content=documents[accession],
+        if await engine.get_disclosure(thesis.thesis_id, accession) is None:
+            await engine.add_disclosure(
+                DisclosureDocument(
+                    document_id=accession,
+                    thesis_id=thesis.thesis_id,
+                    accession=accession,
+                    filing_date=filing_date,
+                    source_url=source_url,
+                    content=documents[accession],
+                )
             )
-        )
-    return engine, thesis, chunks
+    return engine
 
 
 def create_app(
-    workflow: AgenticThesisEngine | AgenticThesisWorkflow | None = None,
+    engine: AgenticThesisEngine | AgenticThesisWorkflow | None = None,
     *,
     sec_client: Any = None,
     monitor_interval: float | None = None,
@@ -208,9 +192,8 @@ def create_app(
 ) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        if workflow is None:
-            app.state.engine, app.state.thesis, app.state.chunks = await _default_engine()
-            app.state.workflow = app.state.engine._workflow
+        if engine is None:
+            app.state.engine = await _default_engine()
             user_agent = os.getenv("AGENTIC_THESIS_SEC_USER_AGENT")
             if app.state.sec_client is None and user_agent:
                 app.state.sec_client = SecEdgarClient(user_agent)
@@ -218,11 +201,11 @@ def create_app(
                 app.state.monitor_interval = float(
                     os.getenv("AGENTIC_THESIS_SEC_POLL_SECONDS", "3600")
                 )
-        for run in await app.state.workflow.list_runs():
-            if run["status"] == "running":
-                app.state.run_conditions[run["run_id"]] = asyncio.Condition()
-                app.state.run_tasks[run["run_id"]] = asyncio.create_task(
-                    execute_run(run["run_id"], resume=True)
+        for run in await app.state.engine.list_runs():
+            if run.status == RunStatus.RUNNING:
+                app.state.run_conditions[run.run_id] = asyncio.Condition()
+                app.state.run_tasks[run.run_id] = asyncio.create_task(
+                    execute_run(run.run_id)
                 )
         if app.state.monitor_interval is not None:
             app.state.monitor_task = asyncio.create_task(poll_sec_monitors())
@@ -234,19 +217,16 @@ def create_app(
         for task in pending:
             task.cancel()
         await asyncio.gather(*pending, return_exceptions=True)
-        if workflow is None:
+        if engine is None:
             await app.state.engine.close()
 
-    app = FastAPI(title="AgenticThesis", version="0.7.0", lifespan=lifespan)
-    if workflow is not None:
+    app = FastAPI(title="AgenticThesis", version="0.8.0", lifespan=lifespan)
+    if engine is not None:
         app.state.engine = (
-            workflow
-            if isinstance(workflow, AgenticThesisEngine)
-            else AgenticThesisEngine(workflow)
+            engine
+            if isinstance(engine, AgenticThesisEngine)
+            else AgenticThesisEngine(engine)
         )
-        app.state.workflow = app.state.engine._workflow
-        app.state.thesis = None
-        app.state.chunks = None
     app.state.run_tasks = {}
     app.state.run_conditions = {}
     app.state.sec_client = sec_client
@@ -258,24 +238,15 @@ def create_app(
         event = jsonable_encoder(event)
         condition = app.state.run_conditions.setdefault(run_id, asyncio.Condition())
         async with condition:
-            await app.state.workflow.append_event(run_id, event)
+            await app.state.engine.append_event(run_id, event)
             condition.notify_all()
 
     async def execute_run(
         run_id: str,
-        thesis: ThesisSnapshot | None = None,
-        chunks: list[DisclosureChunk] | None = None,
-        *,
-        resume: bool = False,
     ) -> None:
         terminal = False
         try:
-            updates = (
-                app.state.workflow.stream_resume(run_id)
-                if resume
-                else app.state.workflow.stream_start(run_id, thesis, chunks)
-            )
-            async for update in updates:
+            async for update in app.state.engine.execute_run(run_id):
                 for node, payload in update.items():
                     if node == "__interrupt__":
                         await publish(
@@ -310,20 +281,19 @@ def create_app(
                         ]
                     await publish(run_id, event)
             if not terminal:
-                state = await app.state.workflow.get(run_id)
+                state = await app.state.engine.get_run(run_id)
                 await publish(
                     run_id,
                     {
                         "node": "workflow",
-                        "status": state.get("status", "completed"),
-                        "error": state.get("error"),
+                        "status": state.status,
+                        "error": state.error,
                     },
                 )
         except asyncio.CancelledError:
             raise
         except Exception as exc:
             error = str(exc)
-            await app.state.workflow.record_error(run_id, error)
             await publish(
                 run_id,
                 {"node": "workflow", "status": "failed", "error": error},
@@ -331,17 +301,21 @@ def create_app(
 
     async def launch_run(
         run_id: str,
-        thesis: ThesisSnapshot,
-        chunks: list[DisclosureChunk],
+        thesis_id: str,
+        disclosure_id: str,
     ) -> None:
         existing = app.state.run_tasks.get(run_id)
         if existing and not existing.done():
             raise HTTPException(status_code=409, detail="run is already active")
         app.state.run_conditions[run_id] = asyncio.Condition()
-        if not await app.state.workflow.register_run(run_id, thesis):
-            raise HTTPException(status_code=409, detail="run already exists")
+        try:
+            await app.state.engine.start_run(run_id, thesis_id, disclosure_id)
+        except EngineConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
         app.state.run_tasks[run_id] = asyncio.create_task(
-            execute_run(run_id, thesis, chunks)
+            execute_run(run_id)
         )
 
     @app.get("/", response_class=FileResponse)
@@ -350,62 +324,49 @@ def create_app(
 
     @app.post("/runs", status_code=202)
     async def start_run(request: StartRun) -> dict:
-        if request.thesis_id:
-            thesis = await app.state.workflow.get_thesis(request.thesis_id)
-            if thesis is None:
-                raise HTTPException(status_code=404, detail="thesis not found")
-            chunks = await app.state.workflow.chunks_for_thesis(request.thesis_id)
-            if not chunks:
-                raise HTTPException(status_code=422, detail="thesis has no disclosures")
-        else:
-            thesis = request.thesis
-            if thesis is None and app.state.thesis is not None:
-                thesis = await app.state.workflow.current_snapshot(app.state.thesis)
-            chunks = request.chunks or app.state.chunks
-        if thesis is None or chunks is None:
-            raise HTTPException(status_code=422, detail="thesis and chunks are required")
-        await launch_run(request.run_id, thesis, chunks)
+        await launch_run(request.run_id, request.thesis_id, request.disclosure_id)
         return {"run_id": request.run_id, "status": "running"}
 
     @app.get("/theses")
     async def list_theses() -> list[ThesisSnapshot]:
-        return await app.state.workflow.list_theses()
+        return await app.state.engine.list_theses()
 
     @app.post("/theses", status_code=201)
     async def create_thesis(thesis: ThesisSnapshot) -> ThesisSnapshot:
-        if thesis.version != 1:
-            raise HTTPException(status_code=422, detail="a new thesis must start at version 1")
-        if not await app.state.engine.create_thesis(thesis):
-            raise HTTPException(status_code=409, detail="thesis already exists")
-        return thesis
+        try:
+            return await app.state.engine.create_thesis(thesis)
+        except EngineConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.get("/theses/{thesis_id}")
     async def get_thesis(thesis_id: str) -> ThesisSnapshot:
-        thesis = await app.state.workflow.get_thesis(thesis_id)
+        thesis = await app.state.engine.get_thesis(thesis_id)
         if thesis is None:
             raise HTTPException(status_code=404, detail="thesis not found")
         return thesis
 
     @app.get("/monitors")
-    async def list_monitors() -> list[dict]:
-        return await app.state.workflow.list_sec_monitors()
+    async def list_monitors() -> list[SecMonitor]:
+        return await app.state.engine.list_sec_monitors()
 
     @app.put("/theses/{thesis_id}/monitor")
-    async def configure_monitor(thesis_id: str, request: SecMonitorInput) -> dict:
-        if await app.state.workflow.get_thesis(thesis_id) is None:
-            raise HTTPException(status_code=404, detail="thesis not found")
-        return await app.state.workflow.configure_sec_monitor(
-            thesis_id,
-            request.cik,
-            request.forms,
-            request.enabled,
-        )
+    async def configure_monitor(
+        thesis_id: str, request: SecMonitorInput
+    ) -> SecMonitor:
+        try:
+            return await app.state.engine.configure_sec_monitor(
+                thesis_id, request.cik, request.forms, request.enabled
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     async def sync_sec_monitor(thesis_id: str) -> dict:
-        monitor = await app.state.workflow.get_sec_monitor(thesis_id)
+        monitor = await app.state.engine.get_sec_monitor(thesis_id)
         if monitor is None:
             raise HTTPException(status_code=404, detail="SEC monitor not configured")
-        if not monitor["enabled"]:
+        if not monitor.enabled:
             raise HTTPException(status_code=409, detail="SEC monitor is paused")
         if app.state.sec_client is None:
             raise HTTPException(
@@ -413,13 +374,13 @@ def create_app(
                 detail="Set AGENTIC_THESIS_SEC_USER_AGENT to a name and contact email",
             )
         try:
-            filings = await app.state.sec_client.recent_filings(monitor["cik"])
-            matching = [item for item in filings if item["form"] in monitor["forms"]]
-            if monitor["last_accession"]:
+            filings = await app.state.sec_client.recent_filings(monitor.cik)
+            matching = [item for item in filings if item["form"] in monitor.forms]
+            if monitor.last_accession:
                 accessions = [item["accession"] for item in matching]
                 candidates = (
-                    matching[: accessions.index(monitor["last_accession"])]
-                    if monitor["last_accession"] in accessions
+                    matching[: accessions.index(monitor.last_accession)]
+                    if monitor.last_accession in accessions
                     else matching[:1]
                 )
             else:
@@ -427,7 +388,7 @@ def create_app(
             run_ids = []
             for filing in reversed(candidates):
                 content, source_url = await app.state.sec_client.filing_html(
-                    monitor["cik"], filing
+                    monitor.cik, filing
                 )
                 document = DisclosureDocument(
                     document_id=f"{thesis_id}:{filing['accession']}",
@@ -437,22 +398,14 @@ def create_app(
                     source_url=source_url,
                     content=content,
                 )
-                chunks = chunk_filing(
-                    content,
-                    accession=document.accession,
-                    filing_date=document.filing_date,
-                    source_url=source_url,
-                )
-                if not chunks or not await app.state.workflow.add_disclosure(
-                    document, chunks
-                ):
+                try:
+                    await app.state.engine.add_disclosure(document)
+                except EngineConflictError:
                     continue
-                thesis = await app.state.workflow.get_thesis(thesis_id)
-                corpus = await app.state.workflow.chunks_for_thesis(thesis_id)
                 run_id = f"sec-{thesis_id}-{filing['accession']}"
-                await launch_run(run_id, thesis, corpus)
+                await launch_run(run_id, thesis_id, document.document_id)
                 run_ids.append(run_id)
-            await app.state.workflow.record_sec_sync(
+            await app.state.engine.record_sec_sync(
                 thesis_id,
                 last_accession=matching[0]["accession"] if matching else None,
                 imported=len(run_ids),
@@ -460,7 +413,7 @@ def create_app(
         except HTTPException:
             raise
         except Exception as exc:
-            await app.state.workflow.record_sec_sync(
+            await app.state.engine.record_sec_sync(
                 thesis_id,
                 last_accession=None,
                 imported=0,
@@ -476,19 +429,19 @@ def create_app(
 
     async def poll_sec_monitors() -> None:
         while True:
-            for monitor in await app.state.workflow.list_sec_monitors():
-                if not monitor["enabled"]:
+            for monitor in await app.state.engine.list_sec_monitors():
+                if not monitor.enabled:
                     continue
-                if monitor["last_checked_at"]:
+                if monitor.last_checked_at:
                     checked_at = datetime.fromisoformat(
-                        monitor["last_checked_at"]
+                        monitor.last_checked_at
                     ).replace(tzinfo=timezone.utc)
                     if (
                         datetime.now(timezone.utc) - checked_at
                     ).total_seconds() < app.state.collection_interval:
                         continue
                 try:
-                    await sync_sec_monitor(monitor["thesis_id"])
+                    await sync_sec_monitor(monitor.thesis_id)
                 except HTTPException:
                     pass
             await asyncio.sleep(app.state.monitor_interval)
@@ -498,19 +451,18 @@ def create_app(
         return await sync_sec_monitor(thesis_id)
 
     @app.get("/disclosures")
-    async def list_disclosures(thesis_id: str) -> list[dict]:
-        return await app.state.workflow.list_disclosures(thesis_id)
+    async def list_disclosures(thesis_id: str) -> list[DisclosureSummary]:
+        return await app.state.engine.list_disclosures(thesis_id)
 
     @app.post("/disclosures", status_code=201)
     async def create_disclosure(document: DisclosureDocument) -> dict:
-        if await app.state.workflow.get_thesis(document.thesis_id) is None:
-            raise HTTPException(status_code=404, detail="thesis not found")
         try:
             chunk_count = await app.state.engine.add_disclosure(document)
+        except EngineConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        if chunk_count is None:
-            raise HTTPException(status_code=409, detail="disclosure already exists")
+            status = 404 if str(exc) == "thesis not found" else 422
+            raise HTTPException(status_code=status, detail=str(exc)) from exc
         return {
             "document_id": document.document_id,
             "thesis_id": document.thesis_id,
@@ -518,19 +470,23 @@ def create_app(
         }
 
     @app.get("/runs")
-    async def list_runs(thesis_id: str | None = None) -> list[dict]:
-        return await app.state.workflow.list_runs(thesis_id)
+    async def list_runs(thesis_id: str | None = None) -> list[RunSummary]:
+        return await app.state.engine.list_runs(thesis_id)
+
+    @app.get("/theses/{thesis_id}/revisions")
+    async def list_revisions(thesis_id: str) -> list[ThesisRevision]:
+        return await app.state.engine.list_revisions(thesis_id)
 
     @app.get("/runs/{run_id}")
     async def get_run(run_id: str) -> dict:
         state = await app.state.engine.get_run(run_id)
         if not state:
             raise HTTPException(status_code=404, detail="run not found")
-        return _public_state(run_id, state)
+        return _public_state(state)
 
     @app.get("/runs/{run_id}/events")
     async def run_events(run_id: str, request: Request) -> StreamingResponse:
-        if await app.state.workflow.get_run(run_id) is None:
+        if await app.state.engine.get_run(run_id) is None:
             raise HTTPException(status_code=404, detail="run not found")
 
         try:
@@ -543,52 +499,68 @@ def create_app(
             condition = app.state.run_conditions.setdefault(run_id, asyncio.Condition())
             while True:
                 async with condition:
-                    events = await app.state.workflow.list_events(run_id, sequence)
+                    events = await app.state.engine.list_events(run_id, sequence)
                     if not events:
-                        run = await app.state.workflow.get_run(run_id)
-                        if run["status"] in {
-                            "awaiting_review",
+                        run = await app.state.engine.get_run(run_id)
+                        if run.status in {
                             "committed",
                             "rejected",
                             "failed",
                             "version_conflict",
+                            "invalid_review",
                         }:
                             return
                         await condition.wait()
                         continue
                 for sequence, event in events:
                     yield f"id: {sequence}\nevent: state\ndata: {json.dumps(event)}\n\n"
-                    if event["status"] in {"awaiting_review", "committed", "rejected", "failed"}:
+                    if event["status"] in {
+                        "awaiting_review",
+                        "committed",
+                        "rejected",
+                        "failed",
+                        "version_conflict",
+                        "invalid_review",
+                    }:
                         return
 
         return StreamingResponse(stream(), media_type="text/event-stream")
 
     @app.post("/runs/{run_id}/review")
     async def review_run(run_id: str, decision: ReviewDecision) -> dict:
-        result = await app.state.engine.review(run_id, decision)
-        if result.get("status") == "version_conflict":
+        try:
+            result = await app.state.engine.review(run_id, decision)
+        except EngineConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if result.status == RunStatus.VERSION_CONFLICT:
             await publish(
                 run_id,
                 {
                     "node": "human_review",
                     "status": "version_conflict",
-                    "error": result["error"],
+                    "error": result.error,
                 },
             )
-            raise HTTPException(status_code=409, detail=result["error"])
-        if result.get("status") == "review_conflict":
-            raise HTTPException(status_code=409, detail=result["error"])
-        if result.get("status") == "invalid_review":
-            raise HTTPException(status_code=422, detail=result["error"])
+            raise HTTPException(status_code=409, detail=result.error)
+        if result.status == RunStatus.INVALID_REVIEW:
+            await publish(
+                run_id,
+                {
+                    "node": "human_review",
+                    "status": "invalid_review",
+                    "error": result.error,
+                },
+            )
+            raise HTTPException(status_code=422, detail=result.error)
         await publish(
             run_id,
             {
                 "node": "human_review",
-                "status": result.get("status", "completed"),
-                "error": result.get("error"),
+                "status": result.status,
+                "error": result.error,
             },
         )
-        return _public_state(run_id, result)
+        return _public_state(result)
 
     return app
 

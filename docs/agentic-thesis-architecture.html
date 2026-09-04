@@ -25,12 +25,12 @@
 </head>
 <body>
   <main class="frame">
-    <p class="eyebrow">Architecture · AgenticThesis v0.3</p>
-    <h1>From daily disclosure collection to reviewable thesis memory</h1>
+    <p class="eyebrow">Architecture · AgenticThesis v0.8</p>
+    <h1>From one new disclosure to an auditable thesis revision</h1>
 
     <svg viewBox="0 0 1280 760" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="agentic-thesis-architecture-title agentic-thesis-architecture-desc">
-      <title id="agentic-thesis-architecture-title">AgenticThesis v0.3 system architecture</title>
-      <desc id="agentic-thesis-architecture-desc">Architecture showing manual and scheduled SEC disclosure collection, an installable browser application, a stateful LangGraph RAG workflow with Human Review, and SQLite persistence for disclosures, replayable events, checkpoints, and versioned thesis memory.</desc>
+      <title id="agentic-thesis-architecture-title">AgenticThesis v0.8 system architecture</title>
+      <desc id="agentic-thesis-architecture-desc">Architecture showing one stored disclosure bound to a typed engine run, a stateful LangGraph workflow with Human Review, and an auditable SQLite revision record linking evidence and decisions to immutable thesis versions.</desc>
       <defs>
         <style>@import url('https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500;600&amp;display=swap');</style>
         <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#667069"/></marker>
@@ -71,7 +71,7 @@
       <rect x="220" y="204" width="72" height="12" rx="2" fill="#f6f8f4"/>
       <text x="256" y="212" fill="#2e5aa8" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing=".06em">IMPORT / SYNC</text>
       <rect x="432" y="208" width="72" height="12" rx="2" fill="#f6f8f4"/>
-      <text x="468" y="216" fill="#667069" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing=".06em">NEW FILING</text>
+      <text x="468" y="216" fill="#667069" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing=".06em">BOUND FILING</text>
       <rect x="1168" y="200" width="80" height="12" rx="2" fill="#f6f8f4"/>
       <text x="1208" y="208" fill="#667069" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing=".06em">STORE</text>
       <rect x="248" y="304" width="64" height="12" rx="2" fill="#f6f8f4"/>
@@ -84,8 +84,8 @@
       <text x="212" y="528" fill="#667069" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing=".06em">RUNS + EVENTS</text>
 
       <!-- Collection invariant -->
-      <text x="640" y="112" fill="#276749" font-size="16" font-style="italic" font-family="ui-serif,Georgia,serif">No new filing? Persist the successful check.</text>
-      <text x="640" y="136" fill="#667069" font-size="16" font-style="italic" font-family="ui-serif,Georgia,serif">Skip retrieval, reranking, and LLM analysis.</text>
+      <text x="640" y="112" fill="#276749" font-size="16" font-style="italic" font-family="ui-serif,Georgia,serif">Every run names exactly one new disclosure.</text>
+      <text x="640" y="136" fill="#667069" font-size="16" font-style="italic" font-family="ui-serif,Georgia,serif">No new filing? Persist the check and skip the model.</text>
 
       <!-- Node 1: Sources -->
       <rect x="40" y="88" width="240" height="80" rx="6" fill="#f6f8f4"/>
@@ -108,9 +108,9 @@
       <rect x="40" y="280" width="200" height="96" rx="6" fill="rgba(102,112,105,.10)" stroke="#7a857d" stroke-width="1"/>
       <rect x="52" y="292" width="32" height="12" rx="2" fill="transparent" stroke="rgba(102,112,105,.55)" stroke-width=".8"/>
       <text x="68" y="300" fill="#667069" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">APP</text>
-      <text x="140" y="324" fill="#172019" font-size="12" font-weight="600" font-family="ui-sans-serif,system-ui,sans-serif" text-anchor="middle">agentic-thesis serve</text>
-      <text x="140" y="344" fill="#667069" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">Browser UI · FastAPI async</text>
-      <text x="140" y="360" fill="#667069" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">multi-thesis · SSE replay</text>
+      <text x="140" y="324" fill="#172019" font-size="12" font-weight="600" font-family="ui-sans-serif,system-ui,sans-serif" text-anchor="middle">AgenticThesisEngine</text>
+      <text x="140" y="344" fill="#667069" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">typed Python interface</text>
+      <text x="140" y="360" fill="#667069" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">serve: FastAPI · Browser · SSE</text>
 
       <!-- Node 4: Retrieval -->
       <rect x="320" y="280" width="200" height="96" rx="6" fill="#f6f8f4"/>
@@ -119,7 +119,7 @@
       <text x="348" y="300" fill="#172019" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">RAG</text>
       <text x="420" y="324" fill="#172019" font-size="12" font-weight="600" font-family="ui-sans-serif,system-ui,sans-serif" text-anchor="middle">Hybrid Retrieval</text>
       <text x="420" y="344" fill="#667069" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">BM25 + Qdrant · RRF · API rerank</text>
-      <text x="420" y="360" fill="#667069" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">thesis claims × disclosure corpus</text>
+      <text x="420" y="360" fill="#667069" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">thesis claims × one bound disclosure</text>
 
       <!-- Node 5: EvidencePack -->
       <rect x="560" y="280" width="200" height="96" rx="6" fill="#f6f8f4"/>
@@ -154,7 +154,7 @@
       <rect x="892" y="444" width="32" height="12" rx="2" fill="transparent" stroke="rgba(102,112,105,.55)" stroke-width=".8"/>
       <text x="908" y="452" fill="#667069" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">HITL</text>
       <text x="1040" y="476" fill="#172019" font-size="12" font-weight="600" font-family="ui-sans-serif,system-ui,sans-serif" text-anchor="middle">Human Review → CAS Commit</text>
-      <text x="1040" y="496" fill="#667069" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">interrupt · approve / reject · vN+1 / conflict</text>
+      <text x="1040" y="496" fill="#667069" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">persist decision · approve / reject · vN+1 / conflict</text>
 
       <!-- Node 9: Durable state -->
       <rect x="320" y="592" width="880" height="80" rx="6" fill="#f6f8f4"/>
@@ -162,8 +162,8 @@
       <rect x="332" y="604" width="32" height="12" rx="2" fill="transparent" stroke="rgba(39,103,73,.55)" stroke-width=".8"/>
       <text x="348" y="612" fill="#276749" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">DB</text>
       <text x="760" y="628" fill="#172019" font-size="12" font-weight="600" font-family="ui-sans-serif,system-ui,sans-serif" text-anchor="middle">SQLite Durable State</text>
-      <text x="760" y="648" fill="#667069" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">disclosures + monitor cursor · runs + replayable events</text>
-      <text x="760" y="664" fill="#667069" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">LangGraph checkpoints · immutable snapshots + thesis heads</text>
+      <text x="760" y="648" fill="#667069" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">bound runs · validated deltas · evidence · review decisions</text>
+      <text x="760" y="664" fill="#667069" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">replayable events · checkpoints · immutable snapshots + heads</text>
 
       <!-- Legend -->
       <line x1="40" y1="716" x2="1240" y2="716" stroke="#dce3dd" stroke-width=".8"/>

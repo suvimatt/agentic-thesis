@@ -63,13 +63,17 @@
       <h1>Track why you own a company,<br>not every headline.</h1>
       <p class="lede">Write down why you invested and what would prove you wrong. AgenticThesis checks official filings, shows which reasons changed, and links every conclusion to the source. You decide what to save.</p>
     </div>
-    <div><label for="thesis">Company thesis</label><select id="thesis"></select><button id="start">Check saved filings</button></div>
+    <div>
+      <label for="thesis">Company thesis</label><select id="thesis"></select>
+      <label for="disclosure">New disclosure to review</label><select id="disclosure"></select>
+      <button id="start">Check this disclosure</button>
+    </div>
   </header>
 
   <div class="grid">
     <section class="card">
       <div class="row between"><h2>What changed in your company thesis?</h2><span id="status" class="badge">Ready</span></div>
-      <div id="claims" class="empty">Choose a company and check its saved filings. Each reason you believe in the business will be marked as still supported, weakened, possibly broken, or lacking evidence.</div>
+      <div id="claims" class="empty">Choose a company and one disclosure. Each reason you believe in the business will be marked as still supported, weakened, possibly broken, or lacking evidence.</div>
     </section>
     <aside class="card">
       <h2>What AgenticThesis is doing</h2>
@@ -143,7 +147,7 @@
 <script>
   const $ = id => document.getElementById(id);
   const statusLabels = {
-    ready:'Ready', running:'Checking filings', awaiting_review:'Needs your review',
+    ready:'Ready', running:'Checking disclosure', awaiting_review:'Needs your review',
     committed:'Update saved', rejected:'Kept unchanged', failed:'Check failed',
     version_conflict:'A newer update exists', reconnecting:'Reconnecting',
     submitting_review:'Saving your decision', needs_refresh:'Refresh needed'
@@ -233,7 +237,7 @@
     }
     $('runs').className = '';
     $('runs').innerHTML = runs.map(run =>
-      `<article class="claim row between"><div><strong>${escapeHtml(run.thesis_id)}</strong><div class="muted">${escapeHtml(run.run_id)} · Saved view v${run.base_thesis_version}</div></div><div class="row"><span class="badge ${run.status}">${escapeHtml(statusLabels[run.status] || run.status)}</span><button class="secondary" data-run-id="${escapeHtml(run.run_id)}">Open</button></div></article>`
+      `<article class="claim row between"><div><strong>${escapeHtml(run.thesis_id)}</strong><div class="muted">${escapeHtml(run.disclosure_id)} · Saved view v${run.base_thesis_version}</div></div><div class="row"><span class="badge ${run.status}">${escapeHtml(statusLabels[run.status] || run.status)}</span><button class="secondary" data-run-id="${escapeHtml(run.run_id)}">Open</button></div></article>`
     ).join('');
     document.querySelectorAll('[data-run-id]').forEach(button =>
       button.addEventListener('click', () => openRun(button.dataset.runId))
@@ -244,7 +248,11 @@
 
   async function loadDisclosures() {
     const thesisId = $('thesis').value;
-    if (!thesisId) return;
+    if (!thesisId) {
+      $('disclosure').innerHTML = '';
+      $('start').disabled = true;
+      return;
+    }
     const disclosures = await readResponse(
       await fetch(`/disclosures?thesis_id=${encodeURIComponent(thesisId)}`)
     );
@@ -252,6 +260,10 @@
     $('disclosures').innerHTML = disclosures.length
       ? disclosures.map(item => `<article class="claim"><div class="row between"><strong>${escapeHtml(item.accession)}</strong><span class="muted">${escapeHtml(item.filing_date)}</span></div><div class="muted">${escapeHtml(item.document_id)}</div></article>`).join('')
       : 'No company filings are saved yet.';
+    $('disclosure').innerHTML = disclosures.map(item =>
+      `<option value="${escapeHtml(item.document_id)}">${escapeHtml(item.filing_date)} · ${escapeHtml(item.accession)}</option>`
+    ).join('');
+    $('start').disabled = !disclosures.length;
   }
 
   async function loadMonitor() {
@@ -286,7 +298,7 @@
     if (preferredId && theses.some(item => item.thesis_id === preferredId)) {
       $('thesis').value = preferredId;
     }
-    $('start').disabled = !theses.length;
+    $('start').disabled = true;
     if (theses.length) await Promise.all([loadDisclosures(), loadMonitor()]);
   }
 
@@ -325,6 +337,7 @@
     if (state.thesis?.thesis_id) {
       $('thesis').value = state.thesis.thesis_id;
       await loadDisclosures();
+      $('disclosure').value = state.disclosure_id;
     }
     setStatus(state.status);
     if (state.status === 'awaiting_review') {
@@ -341,10 +354,12 @@
     $('review').style.display = 'none';
     setStatus('running');
     const thesisId = $('thesis').value;
+    const disclosureId = $('disclosure').value;
     if (!thesisId) return showError('Add a company thesis first.');
+    if (!disclosureId) return showError('Add and choose a disclosure first.');
     runId = `${thesisId}-${crypto.randomUUID()}`;
     try {
-      await readResponse(await fetch('/runs', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({run_id:runId, thesis_id:thesisId})}));
+      await readResponse(await fetch('/runs', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({run_id:runId, thesis_id:thesisId, disclosure_id:disclosureId})}));
       connectEvents();
     } catch (error) {
       setStatus('failed');

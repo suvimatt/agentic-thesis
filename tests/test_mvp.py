@@ -103,6 +103,26 @@ def test_gold_rank_reports_one_based_position_or_missing() -> None:
     assert gold_rank(["distractor", "other"], "gold") is None
 
 
+def test_delta_gold_covers_two_companies_and_all_decisions() -> None:
+    root = Path(__file__).parents[1]
+    cases = json.loads((root / "evals/delta_gold.json").read_text())
+
+    assert len({case["company"] for case in cases}) == 2
+    assert {case["expected_status"] for case in cases} == {
+        "supported",
+        "weakened",
+        "possibly_invalidated",
+        "unknown",
+    }
+    assert all(
+        case["evidence_anchor"] in case["disclosure"]["content"]
+        for case in cases
+    )
+    assert sorted(
+        case["sequence"] for case in cases if case["company"] == "Apple Inc."
+    ) == [1, 2]
+
+
 async def test_hybrid_retrieval_reports_measured_recall_at_5() -> None:
     root = Path(__file__).parents[1]
     chunks = [
@@ -477,17 +497,8 @@ async def test_app_shutdown_waits_for_inflight_run_cancellation(tmp_path: Path) 
             )
         ],
     )
-    chunks = [
-        DisclosureChunk(
-            chunk_id="new",
-            accession="new",
-            filing_date="2024-09-28",
-            section="Gross Margin",
-            text="Services gross margin was 73.9 percent.",
-            start_char=0,
-            end_char=40,
-        )
-    ]
+    content = "<p>Services gross margin was 73.9 percent.</p>"
+    chunks = chunk_filing(content, accession="new", filing_date="2024-09-28")
 
     class BlockingRetriever:
         async def search_with_timings(self, query: str, *, limit: int):
@@ -507,11 +518,27 @@ async def test_app_shutdown_waits_for_inflight_run_cancellation(tmp_path: Path) 
         analyze,
     )
     app = create_app(workflow)
-    app.state.thesis = thesis
-    app.state.chunks = chunks
     async with app.router.lifespan_context(app):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post("/runs", json={"run_id": "shutdown-run"})
+            await client.post("/theses", json=thesis.model_dump(mode="json"))
+            await client.post(
+                "/disclosures",
+                json={
+                    "document_id": "new",
+                    "thesis_id": thesis.thesis_id,
+                    "accession": "new",
+                    "filing_date": "2024-09-28",
+                    "content": content,
+                },
+            )
+            response = await client.post(
+                "/runs",
+                json={
+                    "run_id": "shutdown-run",
+                    "thesis_id": thesis.thesis_id,
+                    "disclosure_id": "new",
+                },
+            )
             assert response.status_code == 202
             await started.wait()
 
@@ -566,17 +593,8 @@ async def test_langgraph_resumes_after_restart_and_rejects_stale_commit(tmp_path
             )
         ],
     )
-    chunks = [
-        DisclosureChunk(
-            chunk_id="new",
-            accession="new",
-            filing_date="2024-09-28",
-            section="Gross Margin",
-            text="Services gross margin was 73.9 percent.",
-            start_char=0,
-            end_char=40,
-        )
-    ]
+    content = "<p>Services gross margin was 73.9 percent.</p>"
+    chunks = chunk_filing(content, accession="new", filing_date="2024-09-28")
 
     class FakeRetriever:
         async def search(self, query: str, *, mode: str, limit: int) -> list[RetrievalHit]:
@@ -610,7 +628,9 @@ async def test_langgraph_resumes_after_restart_and_rejects_stale_commit(tmp_path
 
     database = tmp_path / "state.sqlite"
     first = await AgenticThesisWorkflow.create(database, FakeRetriever(), analyze)
-    paused = await first.start("resume-run", thesis, chunks)
+    await first.create_thesis(thesis)
+    await first.register_run("resume-run", thesis, "new")
+    paused = await first.start("resume-run", "new", thesis, chunks)
     assert paused["__interrupt__"]
     await first.close()
 
@@ -619,7 +639,10 @@ async def test_langgraph_resumes_after_restart_and_rejects_stale_commit(tmp_path
     assert committed["status"] == "committed"
     assert committed["thesis"].version == 2
 
-    conflict_paused = await restarted.start("conflict-run", committed["thesis"], chunks)
+    await restarted.register_run("conflict-run", committed["thesis"], "new")
+    conflict_paused = await restarted.start(
+        "conflict-run", "new", committed["thesis"], chunks
+    )
     assert conflict_paused["__interrupt__"]
     await restarted.advance_head("aapl-primary")
     await restarted.close()
@@ -678,12 +701,24 @@ async def test_langgraph_resumes_after_restart_and_rejects_stale_commit(tmp_path
         assert created.status_code == 201
         assert (await client.get("/theses/guided-test")).json() == guided_thesis
 
+        await client.post("/theses", json=api_thesis.model_dump(mode="json"))
+        await client.post(
+            "/disclosures",
+            json={
+                "document_id": "api-new",
+                "thesis_id": api_thesis.thesis_id,
+                "accession": "new",
+                "filing_date": "2024-09-28",
+                "content": content,
+            },
+        )
+
         started = await client.post(
             "/runs",
             json={
                 "run_id": "api-run",
-                "thesis": api_thesis.model_dump(mode="json"),
-                "chunks": [chunk.model_dump(mode="json") for chunk in chunks],
+                "thesis_id": api_thesis.thesis_id,
+                "disclosure_id": "api-new",
             },
         )
         assert started.status_code == 202
@@ -709,21 +744,40 @@ async def test_langgraph_resumes_after_restart_and_rejects_stale_commit(tmp_path
         assert repeated_review.status_code == 409
         assert repeated_review.json()["detail"] == "run is not awaiting review"
 
-        stale_thesis = ThesisSnapshot.model_validate(reviewed.json()["thesis"])
-        app.state.thesis = api_thesis
-        app.state.chunks = chunks
-        latest_started = await client.post("/runs", json={"run_id": "api-latest"})
+        latest_started = await client.post(
+            "/runs",
+            json={
+                "run_id": "api-latest",
+                "thesis_id": api_thesis.thesis_id,
+                "disclosure_id": "api-new",
+            },
+        )
         assert latest_started.status_code == 202
         await client.get("/runs/api-latest/events")
         latest_state = (await client.get("/runs/api-latest")).json()
         assert latest_state["thesis"]["version"] == 2
+        invalid_review = await client.post(
+            "/runs/api-latest/review",
+            json={
+                "action": "approve",
+                "edited_delta": {
+                    "base_thesis_version": 2,
+                    "claim_deltas": [],
+                },
+            },
+        )
+        assert invalid_review.status_code == 422
+        assert (await client.get("/runs/api-latest")).json()["status"] == "invalid_review"
+        assert (await restarted_again.list_events("api-latest"))[-1][1][
+            "status"
+        ] == "invalid_review"
 
         conflict_started = await client.post(
             "/runs",
             json={
                 "run_id": "api-conflict",
-                "thesis": stale_thesis.model_dump(mode="json"),
-                "chunks": [chunk.model_dump(mode="json") for chunk in chunks],
+                "thesis_id": api_thesis.thesis_id,
+                "disclosure_id": "api-new",
             },
         )
         assert conflict_started.status_code == 202
@@ -740,12 +794,23 @@ async def test_langgraph_resumes_after_restart_and_rejects_stale_commit(tmp_path
         )["status"] == "version_conflict"
 
         error_thesis = thesis.model_copy(update={"thesis_id": "aapl-error"})
+        await client.post("/theses", json=error_thesis.model_dump(mode="json"))
+        await client.post(
+            "/disclosures",
+                json={
+                    "document_id": "error-new",
+                    "thesis_id": error_thesis.thesis_id,
+                    "accession": "new",
+                "filing_date": "2024-09-28",
+                "content": content,
+            },
+        )
         error_started = await client.post(
             "/runs",
             json={
                 "run_id": "api-error",
-                "thesis": error_thesis.model_dump(mode="json"),
-                "chunks": [chunk.model_dump(mode="json") for chunk in chunks],
+                "thesis_id": error_thesis.thesis_id,
+                "disclosure_id": "error-new",
             },
         )
         assert error_started.status_code == 202
@@ -771,15 +836,10 @@ async def test_run_history_and_sse_replay_survive_restart(tmp_path: Path) -> Non
             )
         ],
     )
-    chunk = DisclosureChunk(
-        chunk_id="history-evidence",
-        accession="history",
-        filing_date="2024-09-28",
-        section="Gross Margin",
-        text="Services gross margin was 73.9 percent.",
-        start_char=0,
-        end_char=40,
-    )
+    content = "<p>Services gross margin was 73.9 percent.</p>"
+    chunk = chunk_filing(
+        content, accession="history", filing_date="2024-09-28"
+    )[0]
 
     class FakeRetriever:
         async def search_with_timings(self, query: str, *, limit: int):
@@ -804,12 +864,23 @@ async def test_run_history_and_sse_replay_survive_restart(tmp_path: Path) -> Non
     async with AsyncClient(
         transport=ASGITransport(app=first_app), base_url="http://test"
     ) as client:
+        await client.post("/theses", json=thesis.model_dump(mode="json"))
+        await client.post(
+            "/disclosures",
+            json={
+                "document_id": "history-disclosure",
+                "thesis_id": thesis.thesis_id,
+                "accession": "history",
+                "filing_date": "2024-09-28",
+                "content": content,
+            },
+        )
         started = await client.post(
             "/runs",
             json={
                 "run_id": "history-run",
-                "thesis": thesis.model_dump(mode="json"),
-                "chunks": [chunk.model_dump(mode="json")],
+                "thesis_id": thesis.thesis_id,
+                "disclosure_id": "history-disclosure",
             },
         )
         assert started.status_code == 202
@@ -829,8 +900,11 @@ async def test_run_history_and_sse_replay_survive_restart(tmp_path: Path) -> Non
             {
                 "run_id": "history-run",
                 "thesis_id": "history-thesis",
+                "disclosure_id": "history-disclosure",
                 "base_thesis_version": 1,
                 "status": "awaiting_review",
+                "committed_thesis_version": None,
+                "error": None,
             }
         ]
         replayed = await client.get(
@@ -920,7 +994,12 @@ async def test_multiple_theses_use_only_their_own_manual_disclosures(tmp_path: P
         }
 
         missing = await client.post(
-            "/runs", json={"run_id": "missing-run", "thesis_id": "does-not-exist"}
+            "/runs",
+            json={
+                "run_id": "missing-run",
+                "thesis_id": "does-not-exist",
+                "disclosure_id": "missing",
+            },
         )
         assert missing.status_code == 404
         no_disclosures = ThesisSnapshot(
@@ -939,9 +1018,14 @@ async def test_multiple_theses_use_only_their_own_manual_disclosures(tmp_path: P
             await client.post("/theses", json=no_disclosures.model_dump(mode="json"))
         ).status_code == 201
         no_disclosure_run = await client.post(
-            "/runs", json={"run_id": "empty-run", "thesis_id": "no-disclosures"}
+            "/runs",
+            json={
+                "run_id": "empty-run",
+                "thesis_id": "no-disclosures",
+                "disclosure_id": "missing",
+            },
         )
-        assert no_disclosure_run.status_code == 422
+        assert no_disclosure_run.status_code == 404
 
         for thesis_id, expected, excluded in (
             ("apple-custom", "wearables", "cloud"),
@@ -949,7 +1033,11 @@ async def test_multiple_theses_use_only_their_own_manual_disclosures(tmp_path: P
         ):
             started = await client.post(
                 "/runs",
-                json={"run_id": f"{thesis_id}-run", "thesis_id": thesis_id},
+                json={
+                    "run_id": f"{thesis_id}-run",
+                    "thesis_id": thesis_id,
+                    "disclosure_id": f"{thesis_id}-2024",
+                },
             )
             assert started.status_code == 202
             await client.get(f"/runs/{thesis_id}-run/events")

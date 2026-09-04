@@ -9,10 +9,11 @@ from time import perf_counter
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
 
-from agentic_thesis.models import ThesisSnapshot
+from agentic_thesis.models import DisclosureChunk, ThesisSnapshot
 from agentic_thesis.rag import (
     HybridRetriever,
     OpenAIModel,
+    RetrievalHit,
     build_evidence_pack,
     chunk_filing,
     enforce_citations,
@@ -129,6 +130,54 @@ async def main() -> None:
     analysis_ms = round((perf_counter() - started) * 1_000, 1)
     validated = enforce_citations(delta, packs, thesis)
 
+    delta_cases = json.loads((ROOT / "evals/delta_gold.json").read_text())
+    delta_results = []
+    for case in delta_cases:
+        case_thesis = ThesisSnapshot(
+            thesis_id=case["case_id"],
+            company=case["company"],
+            version=case["sequence"],
+            claims=[case["claim"]],
+        )
+        disclosure = case["disclosure"]
+        chunk = DisclosureChunk(
+            chunk_id=case["case_id"],
+            accession=disclosure["accession"],
+            filing_date=disclosure["filing_date"],
+            section="Curated evaluation excerpt",
+            text=disclosure["content"],
+            start_char=0,
+            end_char=len(disclosure["content"]),
+            source_url=disclosure["source_url"],
+        )
+        pack = build_evidence_pack(
+            case["claim"]["claim_id"],
+            case["claim"]["statement"],
+            [RetrievalHit(chunk, 1.0)],
+            token_budget=2_000,
+        )
+        checked = enforce_citations(
+            await model.analyze(case_thesis, [pack]), [pack], case_thesis
+        ).claim_deltas[0]
+        cited_quotes = [
+            item.quote for item in pack.items if item.evidence_id in checked.evidence_ids
+        ]
+        delta_results.append(
+            {
+                "case_id": case["case_id"],
+                "expected": case["expected_status"],
+                "actual": checked.status.value,
+                "status_match": checked.status.value == case["expected_status"],
+                "grounded_evidence": checked.status.value == "unknown"
+                or (
+                    bool(cited_quotes)
+                    and any(
+                        case["evidence_anchor"] in quote for quote in cited_quotes
+                    )
+                ),
+            }
+        )
+
     def grouped_metrics(field: str) -> dict[str, dict[str, dict[str, float | int]]]:
         grouped: dict[str, dict[str, dict[str, float | int]]] = {}
         for value in sorted({case[field] for case in cases}):
@@ -190,6 +239,20 @@ async def main() -> None:
             for pack in packs
         },
         "validated_thesis_delta": validated.model_dump(mode="json"),
+        "thesis_delta_evaluation": {
+            "cases": len(delta_results),
+            "status_accuracy": sum(item["status_match"] for item in delta_results)
+            / len(delta_results),
+            "grounded_evidence_rate": sum(
+                item["grounded_evidence"] for item in delta_results
+            )
+            / len(delta_results),
+            "high_risk_false_positives": sum(
+                item["expected"] == "unknown" and item["actual"] != "unknown"
+                for item in delta_results
+            ),
+            "results": delta_results,
+        },
     }
     output = ROOT / "evals/live_results.json"
     output.write_text(json.dumps(report, indent=2) + "\n")

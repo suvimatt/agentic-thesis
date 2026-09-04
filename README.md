@@ -24,6 +24,8 @@ The same Python distribution provides two entry points:
 - `agentic-thesis serve` runs the self-hosted application with SQLite and embedded Qdrant;
 - `AgenticThesisEngine` is the supported interface for Python applications.
 
+In v0.8, one run binds exactly one stored disclosure to one thesis version. The resulting `ThesisRun` remains queryable through analysis, Human Review, rejection, failure, or commit; an approved run also creates a `ThesisRevision` that links the disclosure, validated delta, evidence, review decision, and committed thesis version.
+
 For investors, the outcome is simple: remember why you invested and notice when new facts challenge those reasons.
 
 AgenticThesis lets you write down:
@@ -97,10 +99,16 @@ AGENTIC_THESIS_SEC_USER_AGENT="AgenticThesis your-email@example.com"
 ### 2. Start the application
 
 ```bash
-uvx agentic-thesis==0.7.0 serve
+uvx agentic-thesis==0.8.0 serve
 ```
 
 Open [http://127.0.0.1:8000](http://127.0.0.1:8000). The first start includes a ready-to-use Apple company thesis and two filings. Your company theses, source documents, vector index, checks, pending reviews, and approved updates remain under `~/.agentic-thesis/` after you close and restart the app.
+
+v0.8 intentionally does not migrate v0.7 data. If `~/.agentic-thesis/` contains a v0.7 SQLite database, keep it as a backup and start v0.8 with a fresh directory:
+
+```bash
+uvx agentic-thesis==0.8.0 serve --data-dir ~/.agentic-thesis-v08
+```
 
 Create another company thesis in the browser by entering the company, each reason you believe in the business, why it matters, and one fact that would prove it wrong. No JSON or schema knowledge is required.
 
@@ -121,7 +129,7 @@ The test suite uses deterministic retrieval and model substitutes where appropri
 Install the engine from PyPI:
 
 ```bash
-python -m pip install "agentic-thesis==0.7.0"
+python -m pip install "agentic-thesis==0.8.0"
 ```
 
 `open_local` supplies the default SQLite checkpoint/state adapter and persistent embedded Qdrant index. Callers provide the model functions and use domain models exported from `agentic_thesis`:
@@ -137,12 +145,19 @@ engine = await AgenticThesisEngine.open_local(
 )
 await engine.create_thesis(thesis)
 await engine.add_disclosure(disclosure)
-paused = await engine.run("aapl-2024-review", thesis.thesis_id)
+paused = await engine.run(
+    "aapl-2024-review",
+    thesis.thesis_id,
+    disclosure.document_id,
+)
 committed = await engine.review(
     "aapl-2024-review", ReviewDecision(action="approve")
 )
+revisions = await engine.list_revisions(thesis.thesis_id)
 await engine.close()
 ```
+
+`run` returns a typed `ThesisRun`, including its bound `disclosure_id`, validated delta, evidence packs, review outcome, and committed version when present. `list_revisions` returns only approved, committed `ThesisRevision` records; rejected runs remain in run history but never become revisions.
 
 The executable contract is [`tests/test_engine_contract.py`](tests/test_engine_contract.py). FastAPI, the browser application, SSE, and the local scheduler are self-host adapters around the same engine; they are not required by engine callers.
 
@@ -176,13 +191,13 @@ The code and engineering sections use precise internal names. In the product:
 Write down why you believe in the business and what would prove you wrong
 → AgenticThesis checks selected SEC reports once a day
 → No new filing: record the check and stop
-→ New filing: compare its facts with every saved reason
+→ New filing: create a run bound to that disclosure and compare it with every saved reason
 → Show Still supported / Weakened / May no longer hold / Not enough evidence
 → Link each result to the exact original quotes
 → Wait for you to keep your current view or save the update
 ```
 
-Under the hood, these four results are stored as `supported`, `weakened`, `possibly_invalidated`, and `unknown`. The reviewable update is a typed `ThesisDelta`; an approved update becomes the next immutable `ThesisSnapshot` version.
+Under the hood, these four results are stored as `supported`, `weakened`, `possibly_invalidated`, and `unknown`. The reviewable update is a typed `ThesisDelta`; the durable run is a `ThesisRun`; and an approved update creates both the next immutable `ThesisSnapshot` and a queryable `ThesisRevision`.
 
 ## Architecture
 
@@ -193,11 +208,11 @@ The system has one application-owned workflow, not a collection of autonomous ag
 | Boundary | Responsibility | Implementation |
 | --- | --- | --- |
 | Interface | Manage theses and disclosures, poll selected SEC filing types, start work asynchronously, replay progress, and accept review decisions | FastAPI, background `asyncio` tasks, durable SSE |
-| Retrieval | Find claim-relevant passages across the filing corpus | deterministic section-labelled fixed-size chunks, BM25, embedded persistent Qdrant vectors, RRF, API rerank only when BM25/vector top-1 differ and top-3 overlap is below 2 |
+| Retrieval | Find claim-relevant passages within the run's bound disclosure | deterministic section-labelled fixed-size chunks, BM25, embedded persistent Qdrant vectors, RRF, API rerank only when BM25/vector top-1 differ and top-3 overlap is below 2 |
 | Working Context | Give each claim the smallest sufficient, source-addressable evidence | query-conditioned extractive `EvidencePack`, fixed 2,000-token per-claim budget, evidence IDs and source offsets |
 | Semantic analysis | Compare every thesis claim with supplied evidence only | API Structured Outputs → typed `ThesisDelta` |
 | Integrity gates | Prevent unsupported conclusions or unsafe state changes | quote/source validation, falsifier validation, exact-claim validation, Human Review |
-| Durable state | Resume active or paused runs and preserve authoritative thesis history | LangGraph SQLite checkpoints, durable run events, immutable `ThesisSnapshot`s, thesis head |
+| Durable state | Resume active or paused runs and preserve authoritative thesis history | LangGraph SQLite checkpoints, durable `ThesisRun` records and events, immutable `ThesisSnapshot`s, queryable `ThesisRevision`s, thesis head |
 | Commit | Apply an approved delta only if its base version is still current | SQLite compare-and-swap → `vN+1` or `version_conflict` |
 
 The two checked-in SEC filings contain 97,675 `cl100k_base` tokens after deterministic HTML extraction. A model call never receives the full filings: it receives a per-claim, cited `EvidencePack`. This keeps **Context** (temporary working evidence), **Memory** (versioned thesis), and **Workflow State** (resumable execution) separate.
@@ -213,6 +228,7 @@ The editable diagram source is [`docs/agentic-thesis-architecture.html`](docs/ag
 - quote-to-source citation validation; unsupported output is downgraded to `unknown`;
 - a six-node LangGraph with Human Review interrupt and SQLite checkpoint/resume;
 - immutable thesis snapshots and compare-and-swap conflict protection;
+- one-disclosure-per-run execution with typed, durable `ThesisRun` outcomes and queryable committed `ThesisRevision` history;
 - persistent run history and sequenced SSE replay with `Last-Event-ID` across browser or service restarts;
 - multiple isolated theses plus manual HTML/TXT disclosure import;
 - one official-source SEC EDGAR monitor per thesis, selected filing types, accession/content deduplication, manual sync, and a persisted daily collection schedule;
@@ -222,15 +238,16 @@ The editable diagram source is [`docs/agentic-thesis-architecture.html`](docs/ag
 
 ## Verified Results
 
-Observed on the checked-in fixtures on 2026-09-02:
+Observed on the checked-in fixtures on 2026-09-03:
 
 | Check | Observed result |
 | --- | ---: |
-| Tests | 17 passed |
-| Clean wheel install | passed outside the repository |
+| Tests | 20 passed |
+| Wheel build | passed |
 | 2023 extracted tokens / chunks | 48,923 / 109 |
 | 2024 extracted tokens / chunks | 48,752 / 110 |
 | Categorized gold queries | 26: 15 calibration / 11 held-out |
+| Human-labelled thesis-delta cases | 4 across Apple and Microsoft; all four statuses |
 | BM25 / fake-vector / hybrid Recall@5 | 0.846 / 0.538 / 0.769 |
 | Always-rerank / conditional-rerank Recall@5 | 0.885 / 0.846 |
 | BM25 / vector / hybrid / always / conditional MRR | 0.581 / 0.369 / 0.544 / 0.663 / 0.635 |
@@ -240,7 +257,7 @@ Observed on the checked-in fixtures on 2026-09-02:
 | Restart/resume | committed v2 from the same run ID |
 | Stale version | rejected with `version_conflict` / HTTP 409 |
 
-The 26 cases in `evals/gold.json` cover lexical, numeric, semantic, risk, and regulatory questions across both filings. Deterministic vector and rerank substitutes make the ablation reproducible without an external model; they verify policy behavior and metric calculation, not model quality.
+The 26 cases in `evals/gold.json` cover lexical, numeric, semantic, risk, and regulatory retrieval questions across both Apple filings. The four cases in `evals/delta_gold.json` cover all four delta statuses across Apple and Microsoft, including consecutive Apple disclosures. Deterministic tests validate the dataset and retrieval policy without an external model; they do not claim model accuracy.
 
 The checked-in `evals/live_results.json` preserves the earlier real five-query API run over both filings (219 chunks) using `qwen3.7-text-embedding` and `gpt-5.6-luna`:
 
@@ -254,7 +271,7 @@ The checked-in `evals/live_results.json` preserves the earlier real five-query A
 | Five-query rerank evaluation | 38.17 s |
 | Three-claim structured analysis | 16.18 s |
 
-The earlier reranker preserved Recall@5 but did not improve gold position; one case moved from rank 4 to rank 5. The 26-query live rerun has not been recorded, so the current v0.5 comparison is limited to the reproducible deterministic ablation. These timings are one measured historical run, not a latency benchmark or production SLO.
+The earlier reranker preserved Recall@5 but did not improve gold position; one case moved from rank 4 to rank 5. This checked-in report predates the v0.8 thesis-delta evaluation, so no live status accuracy or grounded-evidence result is claimed yet. These timings are one measured historical run, not a latency benchmark or production SLO.
 
 Run the live embedding, rerank, Context compression, and Structured Outputs evaluation with:
 
@@ -271,7 +288,7 @@ Start and review a run through the API:
 ```bash
 curl -X POST http://localhost:8000/runs \
   -H 'content-type: application/json' \
-  -d '{"run_id":"aapl-2024-review","thesis_id":"aapl-primary"}'
+  -d '{"run_id":"aapl-2024-review","thesis_id":"aapl-primary","disclosure_id":"aapl-2024"}'
 
 curl -N http://localhost:8000/runs/aapl-2024-review/events
 
@@ -290,7 +307,7 @@ curl -X PUT http://localhost:8000/theses/aapl-primary/monitor \
 curl -X POST http://localhost:8000/theses/aapl-primary/sync
 ```
 
-The first successful check imports only the latest selected filing, establishing a cursor without historical backfill. The service checks whether collection is due when it starts and then hourly while running. Automatic SEC collection occurs only when the last successful collection is at least 24 hours old; “Check SEC now” remains a manual override. A failed collection does not advance that timestamp and is retried on the next hourly check. No new filing means no RAG or LLM run; new filings start a `ThesisDelta` workflow that still stops at Human Review.
+The first successful check imports only the latest selected filing, establishing a cursor without historical backfill. The service checks whether collection is due when it starts and then hourly while running. Automatic SEC collection occurs only when the last successful collection is at least 24 hours old; “Check SEC now” remains a manual override. A failed collection does not advance that timestamp and is retried on the next hourly check. No new filing means no RAG or LLM run; each new filing starts its own disclosure-bound `ThesisDelta` workflow that still stops at Human Review.
 
 The browser can also create/list theses, import/list disclosures, list historical runs, and reopen pending reviews. The generated `/docs` page documents the same HTTP API.
 
@@ -311,7 +328,7 @@ That scenario pauses a run at Human Review, closes and recreates the workflow on
 - the scheduler is one in-process `asyncio` loop that checks due state hourly and automatically performs successful SEC collection at most once per 24 hours; it is not a distributed job system or notification service;
 - Qdrant runs embedded and persists vectors under the user data directory; SQLite persists workflow and thesis state;
 - no portfolio management, valuation, Multi-Agent roles, distributed scheduler, or queue;
-- the gold set contains 26 Apple questions across two filings; a second issuer and a current 26-query live API result are still missing;
+- the retrieval gold set contains 26 Apple questions across two filings; the four-case thesis-delta set adds Microsoft, but broader issuer coverage and a current v0.8 live API result are still missing;
 - no measured throughput, p50, p95, or production-readiness claim.
 
 ## License

@@ -24,6 +24,8 @@ AgenticThesis 是一个开源、stateful 的 Python engine，用来判断公司�
 - `agentic-thesis serve` 使用 SQLite 和 embedded Qdrant 运行 self-host 应用；
 - `AgenticThesisEngine` 是其他 Python 应用使用的受支持 interface。
 
+v0.8 中，每个 run 只把一份已保存的 disclosure 绑定到一个 Thesis 版本。生成的 `ThesisRun` 在分析、Human Review、拒绝、失败或提交后都可查询；批准后还会创建 `ThesisRevision`，把 disclosure、校验后的 delta、证据、审核决定和提交后的 Thesis 版本连接起来。
+
 对投资者来说，结果仍然很简单：长期记住自己为什么投资，并在公司出现新事实时检查原来的理由是否还成立。
 
 你先在 AgenticThesis 中写下：
@@ -97,7 +99,7 @@ AGENTIC_THESIS_SEC_USER_AGENT="AgenticThesis your-email@example.com"
 ### 2. 启动应用
 
 ```bash
-uvx agentic-thesis==0.7.0 serve
+uvx agentic-thesis==0.8.0 serve
 ```
 
 打开 [http://127.0.0.1:8000](http://127.0.0.1:8000)。首次启动已经准备好一份 Apple 公司 Thesis 和两份公司报告。你的公司 Theses、原始资料、vector index、历史检查、待确认结果和已经批准的更新都会保存在 `~/.agentic-thesis/`，关闭并重新启动后仍可继续使用。
@@ -121,7 +123,7 @@ python3 -m venv .venv
 从 PyPI 安装 engine：
 
 ```bash
-python -m pip install "agentic-thesis==0.7.0"
+python -m pip install "agentic-thesis==0.8.0"
 ```
 
 `open_local` 默认提供 SQLite checkpoint/state adapter 和可持久化的 embedded Qdrant index。调用者传入模型函数，并使用 `agentic_thesis` 导出的领域模型：
@@ -137,12 +139,19 @@ engine = await AgenticThesisEngine.open_local(
 )
 await engine.create_thesis(thesis)
 await engine.add_disclosure(disclosure)
-paused = await engine.run("aapl-2024-review", thesis.thesis_id)
+paused = await engine.run(
+    "aapl-2024-review",
+    thesis.thesis_id,
+    disclosure.document_id,
+)
 committed = await engine.review(
     "aapl-2024-review", ReviewDecision(action="approve")
 )
+revisions = await engine.list_revisions(thesis.thesis_id)
 await engine.close()
 ```
+
+`run` 返回类型化的 `ThesisRun`，其中包括绑定的 `disclosure_id`、校验后的 delta、evidence packs、审核结果，以及存在时的提交版本。`list_revisions` 只返回已批准并提交的 `ThesisRevision`；被拒绝的 run 保留在运行历史中，但不会成为 revision。
 
 可执行 contract 见 [`tests/test_engine_contract.py`](tests/test_engine_contract.py)。FastAPI、浏览器页面、SSE 和本地 scheduler 都是同一个 engine 外面的 self-host adapter，engine 调用者不需要依赖这些入口。
 
@@ -176,13 +185,13 @@ await engine.close()
 写下你为什么看好这门生意，以及什么事实会证明自己错了
 → AgenticThesis 每天检查一次你指定的 SEC 报告
 → 没有新报告：记录检查并停止
-→ 有新报告：逐条对照报告事实与原来的投资理由
+→ 有新报告：创建只绑定这份 disclosure 的 run，逐条对照它与原来的投资理由
 → 显示 仍然成立 / 被削弱 / 可能不成立 / 证据不足
 → 每个结果都链接到准确的原文
 → 等你决定保持原判断，还是保存这次更新
 ```
 
-系统内部把这四种结果存为 `supported`、`weakened`、`possibly_invalidated` 和 `unknown`。待确认的更新叫 `ThesisDelta`；你批准后，它才成为下一个不可变的 `ThesisSnapshot` 版本。
+系统内部把这四种结果存为 `supported`、`weakened`、`possibly_invalidated` 和 `unknown`。待确认的更新叫 `ThesisDelta`，持久化的运行记录叫 `ThesisRun`；你批准后，系统会同时创建下一个不可变的 `ThesisSnapshot` 和可查询的 `ThesisRevision`。
 
 ## 系统架构
 
@@ -193,11 +202,11 @@ await engine.close()
 | 边界 | 职责 | 实现 |
 | --- | --- | --- |
 | 接口 | 管理 theses 和 disclosures、检查指定 SEC filing types、异步启动任务、重放进度并接受审核决定 | FastAPI、后台 `asyncio` tasks、durable SSE |
-| 检索 | 在 Filing 语料中找到与 claim 相关的段落 | 确定性固定长度切块及 section 标签、BM25、本地持久化 Qdrant vector、RRF；仅在 BM25/vector top-1 不同且 top-3 交集少于 2 个 chunk 时调用 API rerank |
+| 检索 | 在当前 run 绑定的 disclosure 中找到与 claim 相关的段落 | 确定性固定长度切块及 section 标签、BM25、本地持久化 Qdrant vector、RRF；仅在 BM25/vector top-1 不同且 top-3 交集少于 2 个 chunk 时调用 API rerank |
 | Working Context | 为每条 claim 提供最小、充分、可定位来源的证据 | query-conditioned extractive `EvidencePack`、每条 claim 固定 2,000-token 预算、evidence ID 和原文偏移 |
 | 语义分析 | 只根据提供的证据比较每条 Thesis claim | API Structured Outputs → 类型化 `ThesisDelta` |
 | 完整性门禁 | 阻止无依据结论和不安全状态变更 | quote/source 校验、falsifier 校验、exact-claim 校验、Human Review |
-| 持久状态 | 恢复运行中或暂停的任务并保存权威 Thesis 历史 | LangGraph SQLite checkpoint、durable run events、不可变 `ThesisSnapshot`、thesis head |
+| 持久状态 | 恢复运行中或暂停的任务并保存权威 Thesis 历史 | LangGraph SQLite checkpoint、持久化 `ThesisRun` 与 events、不可变 `ThesisSnapshot`、可查询 `ThesisRevision`、thesis head |
 | 提交 | 只有 base version 仍为当前版本时才能应用已批准的 delta | SQLite compare-and-swap → `vN+1` 或 `version_conflict` |
 
 两份仓库内 SEC Filing 经确定性 HTML 提取后共有 97,675 个 `cl100k_base` token。模型调用不会接收完整 Filing，而只接收逐条 claim 构建、带引用的 `EvidencePack`。这使 **Context**（当前调用的临时工作证据）、**Memory**（版本化 Thesis）和 **Workflow State**（可恢复执行状态）彼此分离。
@@ -213,6 +222,7 @@ await engine.close()
 - quote-to-source 引用校验；无依据输出会降级为 `unknown`；
 - 六节点 LangGraph、Human Review interrupt 和 SQLite checkpoint/resume；
 - 不可变 Thesis snapshot 和 compare-and-swap 冲突保护；
+- 一份 disclosure 对应一个 run 的执行模型、类型化并持久化的 `ThesisRun` 结果，以及可查询的已提交 `ThesisRevision` 历史；
 - 可持久化的 run history，以及通过 `Last-Event-ID` 跨浏览器或服务重启重放的顺序化 SSE；
 - 多个相互隔离的 theses，以及手工 HTML/TXT disclosure 导入；
 - 每个 thesis 一个官方 SEC EDGAR monitor，可选择 filing types，按 accession/content 去重，支持手工 sync 和持久化的每日收集 schedule；
@@ -222,15 +232,16 @@ await engine.close()
 
 ## 验证结果
 
-2026-09-02 在仓库内 fixture 上的观测结果：
+2026-09-03 在仓库内 fixture 上的观测结果：
 
 | 检查项 | 观测结果 |
 | --- | ---: |
-| 测试 | 17 passed |
-| 全新环境 wheel 安装 | 在仓库外验证通过 |
+| 测试 | 20 passed |
+| Wheel build | passed |
 | 2023 提取 tokens / chunks | 48,923 / 109 |
 | 2024 提取 tokens / chunks | 48,752 / 110 |
 | 分类 gold queries | 26：15 calibration / 11 held-out |
+| 人工标注 Thesis delta cases | 4 条，覆盖 Apple、Microsoft 和全部四种状态 |
 | BM25 / fake-vector / hybrid Recall@5 | 0.846 / 0.538 / 0.769 |
 | always-rerank / conditional-rerank Recall@5 | 0.885 / 0.846 |
 | BM25 / vector / hybrid / always / conditional MRR | 0.581 / 0.369 / 0.544 / 0.663 / 0.635 |
@@ -240,7 +251,7 @@ await engine.close()
 | 重启与恢复 | 使用相同 run ID 提交 v2 |
 | 旧版本写入 | 返回 `version_conflict` / HTTP 409 |
 
-`evals/gold.json` 的 26 条 case 横跨两份 filing，覆盖 lexical、numeric、semantic、risk 和 regulatory 问题。确定性 vector/rerank substitute 让 ablation 不调用外部模型也能重复执行；它验证的是 policy 行为与指标计算，不是模型质量。
+`evals/gold.json` 的 26 条 case 横跨两份 Apple filing，覆盖 lexical、numeric、semantic、risk 和 regulatory 检索问题。`evals/delta_gold.json` 的 4 条 case 覆盖 Apple、Microsoft 和全部四种 delta 状态，并包含 Apple 的连续两期 disclosure。确定性测试不调用外部模型，只验证数据集与检索 policy，不声称模型准确率。
 
 仓库中的 `evals/live_results.json` 保留了较早一次覆盖两份 Filing、219 个 chunks、5 条 query 的真实 API 运行，使用 `qwen3.7-text-embedding` 和 `gpt-5.6-luna`：
 
@@ -254,7 +265,7 @@ await engine.close()
 | 五条 query rerank evaluation | 38.17 s |
 | 三条 claim structured analysis | 16.18 s |
 
-较早的 reranker 保住了 Recall@5，但没有改善 gold position，其中一条从第 4 降到第 5。当前还没有记录 26 条 query 的 live rerun，因此 v0.5 目前只报告可重复的 deterministic ablation。这些耗时只代表一次历史运行，不是 latency benchmark 或 production SLO。
+较早的 reranker 保住了 Recall@5，但没有改善 gold position，其中一条从第 4 降到第 5。仓库内这份结果早于 v0.8 Thesis delta evaluation，因此目前不声称 live status accuracy 或 grounded-evidence 结果。这些耗时只代表一次历史运行，不是 latency benchmark 或 production SLO。
 
 重新运行 live evaluation：
 
@@ -271,7 +282,7 @@ await engine.close()
 ```bash
 curl -X POST http://localhost:8000/runs \
   -H 'content-type: application/json' \
-  -d '{"run_id":"aapl-2024-review","thesis_id":"aapl-primary"}'
+  -d '{"run_id":"aapl-2024-review","thesis_id":"aapl-primary","disclosure_id":"aapl-2024"}'
 
 curl -N http://localhost:8000/runs/aapl-2024-review/events
 
@@ -290,7 +301,7 @@ curl -X PUT http://localhost:8000/theses/aapl-primary/monitor \
 curl -X POST http://localhost:8000/theses/aapl-primary/sync
 ```
 
-第一次成功检查只导入最新一份符合条件的 Filing，用它建立 cursor，不自动回填全部历史。服务启动时判断是否到期，运行期间每小时只检查一次本地 due state；自动收集只在距离上次成功收集满 24 小时后访问 SEC，“Check SEC now”仍可手工强制检查。失败不会推进成功时间，会在下一次小时检查时重试。没有新 Filing 就不运行 RAG 或 LLM；有新 Filing 才启动 `ThesisDelta` workflow，并停在 Human Review。
+第一次成功检查只导入最新一份符合条件的 Filing，用它建立 cursor，不自动回填全部历史。服务启动时判断是否到期，运行期间每小时只检查一次本地 due state；自动收集只在距离上次成功收集满 24 小时后访问 SEC，“Check SEC now”仍可手工强制检查。失败不会推进成功时间，会在下一次小时检查时重试。没有新 Filing 就不运行 RAG 或 LLM；每份新 Filing 都会启动一个只绑定该 disclosure 的 `ThesisDelta` workflow，并停在 Human Review。
 
 浏览器还可以创建和列出 theses、导入和列出 disclosures、查看历史 runs，并重新打开待审核任务。自动生成的 `/docs` 页面记录同一套 HTTP API。
 
@@ -311,7 +322,7 @@ curl -X POST http://localhost:8000/theses/aapl-primary/sync
 - scheduler 只是一个每小时判断本地 due state、每 24 小时最多自动成功访问 SEC 一次的进程内 `asyncio` loop，不是分布式任务系统或通知服务；
 - Qdrant 以 embedded 模式运行，并把 vectors 持久化到用户数据目录；SQLite 持久化 Workflow 和 Thesis 状态；
 - 没有 portfolio management、valuation、Multi-Agent role、distributed scheduler 或 queue；
-- 当前 gold set 包含 Apple 两份 filing 的 26 条问题，但还缺少第二家公司和新的 26-query live API 结果；
+- 检索 gold set 包含 Apple 两份 filing 的 26 条问题；四条 Thesis delta case 已加入 Microsoft，但仍缺少更广的公司覆盖和当前 v0.8 live API 结果；
 - 没有实测 throughput、p50、p95 或 production-readiness 声明。
 
 ## 开源协议

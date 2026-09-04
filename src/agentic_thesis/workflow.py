@@ -16,6 +16,7 @@ from agentic_thesis.models import (
     DisclosureDocument,
     ResearchState,
     ReviewDecision,
+    RunStatus,
     ThesisDelta,
     ThesisSnapshot,
 )
@@ -25,16 +26,22 @@ from agentic_thesis.rag import HybridRetriever, RetrievalHit, build_evidence_pac
 class AgenticThesisWorkflow:
     def __init__(
         self,
+        database: str,
         connection: aiosqlite.Connection,
+        checkpoint_connection: aiosqlite.Connection,
         checkpointer: AsyncSqliteSaver,
         retriever: Any,
         analyze: Callable[[ThesisSnapshot, list], Awaitable[ThesisDelta]],
     ) -> None:
+        self.database = database
         self.connection = connection
+        self.checkpoint_connection = checkpoint_connection
         self.checkpointer = checkpointer
         self.retriever = retriever
         self.analyze = analyze
         self.model_calls = asyncio.Semaphore(3)
+        # ponytail: one local writer lock; split by thesis only if commit throughput matters.
+        self.commit_lock = asyncio.Lock()
         builder = StateGraph(ResearchState)
         builder.add_node("retrieve_claims", self._retrieve_claims)
         builder.add_node("build_evidence_packs", self._build_evidence_packs)
@@ -59,7 +66,23 @@ class AgenticThesisWorkflow:
         analyze: Callable[[ThesisSnapshot, list], Awaitable[ThesisDelta]],
     ) -> "AgenticThesisWorkflow":
         connection = await aiosqlite.connect(str(database))
-        checkpointer = AsyncSqliteSaver(connection)
+        version = int((await (await connection.execute("PRAGMA user_version")).fetchone())[0])
+        tables = await (
+            await connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+            )
+        ).fetchall()
+        if tables and version != 8:
+            await connection.close()
+            raise RuntimeError(
+                "AgenticThesis v0.8 requires an empty data directory; "
+                "v0.7 SQLite databases are not supported"
+            )
+        if not tables:
+            await connection.execute("PRAGMA user_version = 8")
+            await connection.commit()
+        checkpoint_connection = await aiosqlite.connect(str(database))
+        checkpointer = AsyncSqliteSaver(checkpoint_connection)
         await checkpointer.setup()
         await connection.executescript(
             """
@@ -76,8 +99,14 @@ class AgenticThesisWorkflow:
             CREATE TABLE IF NOT EXISTS runs (
                 run_id TEXT PRIMARY KEY,
                 thesis_id TEXT NOT NULL,
+                disclosure_id TEXT NOT NULL,
                 base_thesis_version INTEGER NOT NULL,
                 status TEXT NOT NULL,
+                validated_delta_json TEXT,
+                evidence_packs_json TEXT,
+                review_json TEXT,
+                committed_thesis_version INTEGER,
+                error TEXT,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
@@ -113,7 +142,14 @@ class AgenticThesisWorkflow:
             """
         )
         await connection.commit()
-        return cls(connection, checkpointer, retriever, analyze)
+        return cls(
+            str(database),
+            connection,
+            checkpoint_connection,
+            checkpointer,
+            retriever,
+            analyze,
+        )
 
     async def _retrieve_claims(self, state: ResearchState) -> dict[str, Any]:
         started = perf_counter()
@@ -197,6 +233,12 @@ class AgenticThesisWorkflow:
 
     async def _human_review(self, state: ResearchState) -> dict[str, Any]:
         started = perf_counter()
+        await self._update_run(
+            state.run_id,
+            status=RunStatus.AWAITING_REVIEW,
+            delta=state.delta,
+            evidence_packs=state.evidence_packs,
+        )
         decision = interrupt(
             {
                 "run_id": state.run_id,
@@ -212,6 +254,13 @@ class AgenticThesisWorkflow:
     async def _commit_snapshot(self, state: ResearchState) -> dict[str, Any]:
         started = perf_counter()
         if state.review.action == "reject":
+            await self._update_run(
+                state.run_id,
+                status=RunStatus.REJECTED,
+                delta=state.delta,
+                evidence_packs=state.evidence_packs,
+                review=state.review,
+            )
             return {
                 "status": "rejected",
                 "timings_ms": self._timings(state, "commit_snapshot", started),
@@ -228,6 +277,14 @@ class AgenticThesisWorkflow:
             or len(supplied_claims) != len(set(supplied_claims))
             or set(supplied_claims) != expected_claims
         ):
+            await self._update_run(
+                state.run_id,
+                status=RunStatus.INVALID_REVIEW,
+                delta=delta,
+                evidence_packs=state.evidence_packs,
+                review=state.review,
+                error="review must contain exactly one delta per current claim",
+            )
             return {
                 "status": "invalid_review",
                 "error": "review must contain exactly one delta per current claim",
@@ -254,22 +311,50 @@ class AgenticThesisWorkflow:
             deep=True,
             update={"version": state.thesis.version + 1, "claims": new_claims},
         )
-        cursor = await self.connection.execute(
-            "UPDATE thesis_heads SET version = ? WHERE thesis_id = ? AND version = ?",
-            (snapshot.version, snapshot.thesis_id, state.thesis.version),
-        )
-        if cursor.rowcount != 1:
-            await self.connection.rollback()
-            return {
-                "status": "version_conflict",
-                "error": "base thesis version is stale",
-                "timings_ms": self._timings(state, "commit_snapshot", started),
-            }
-        await self.connection.execute(
-            "INSERT INTO thesis_snapshots VALUES (?, ?, ?)",
-            (snapshot.thesis_id, snapshot.version, snapshot.model_dump_json()),
-        )
-        await self.connection.commit()
+        async with self.commit_lock, aiosqlite.connect(self.database) as transaction:
+            try:
+                await transaction.execute("BEGIN IMMEDIATE")
+                cursor = await transaction.execute(
+                    "UPDATE thesis_heads SET version = ? WHERE thesis_id = ? AND version = ?",
+                    (snapshot.version, snapshot.thesis_id, state.thesis.version),
+                )
+                if cursor.rowcount != 1:
+                    await transaction.rollback()
+                    await transaction.execute("BEGIN IMMEDIATE")
+                    await self._update_run(
+                        state.run_id,
+                        status=RunStatus.VERSION_CONFLICT,
+                        delta=delta,
+                        evidence_packs=state.evidence_packs,
+                        review=state.review,
+                        error="base thesis version is stale",
+                        connection=transaction,
+                        commit=False,
+                    )
+                    await transaction.commit()
+                    return {
+                        "status": "version_conflict",
+                        "error": "base thesis version is stale",
+                        "timings_ms": self._timings(state, "commit_snapshot", started),
+                    }
+                await transaction.execute(
+                    "INSERT INTO thesis_snapshots VALUES (?, ?, ?)",
+                    (snapshot.thesis_id, snapshot.version, snapshot.model_dump_json()),
+                )
+                await self._update_run(
+                    state.run_id,
+                    status=RunStatus.COMMITTED,
+                    delta=delta,
+                    evidence_packs=state.evidence_packs,
+                    review=state.review,
+                    committed_thesis_version=snapshot.version,
+                    connection=transaction,
+                    commit=False,
+                )
+                await transaction.commit()
+            except Exception:
+                await transaction.rollback()
+                raise
         return {
             "status": "committed",
             "thesis": snapshot,
@@ -279,38 +364,21 @@ class AgenticThesisWorkflow:
     async def start(
         self,
         run_id: str,
+        disclosure_id: str,
         thesis: ThesisSnapshot,
         chunks: list[DisclosureChunk],
     ) -> dict[str, Any]:
-        state = await self._initialize(run_id, thesis, chunks)
+        state = self._initialize(run_id, disclosure_id, thesis, chunks)
         return await self.graph.ainvoke(state, {"configurable": {"thread_id": run_id}})
-
-    async def current_snapshot(self, initial: ThesisSnapshot) -> ThesisSnapshot:
-        cursor = await self.connection.execute(
-            """
-            SELECT snapshots.snapshot_json
-            FROM thesis_heads AS heads
-            LEFT JOIN thesis_snapshots AS snapshots
-              ON snapshots.thesis_id = heads.thesis_id
-             AND snapshots.version = heads.version
-            WHERE heads.thesis_id = ?
-            """,
-            (initial.thesis_id,),
-        )
-        row = await cursor.fetchone()
-        if row is None:
-            return initial
-        if row[0] is None:
-            raise RuntimeError("current thesis snapshot is missing")
-        return ThesisSnapshot.model_validate_json(row[0])
 
     async def stream_start(
         self,
         run_id: str,
+        disclosure_id: str,
         thesis: ThesisSnapshot,
         chunks: list[DisclosureChunk],
     ) -> AsyncIterator[dict[str, Any]]:
-        state = await self._initialize(run_id, thesis, chunks)
+        state = self._initialize(run_id, disclosure_id, thesis, chunks)
         async for update in self.graph.astream(
             state,
             {"configurable": {"thread_id": run_id}},
@@ -326,39 +394,71 @@ class AgenticThesisWorkflow:
         ):
             yield update
 
-    async def _initialize(
-        self,
+    @staticmethod
+    def _initialize(
         run_id: str,
+        disclosure_id: str,
         thesis: ThesisSnapshot,
         chunks: list[DisclosureChunk],
     ) -> ResearchState:
-        await self.connection.execute(
-            "INSERT OR IGNORE INTO thesis_heads VALUES (?, ?)",
-            (thesis.thesis_id, thesis.version),
+        return ResearchState(
+            run_id=run_id,
+            disclosure_id=disclosure_id,
+            thesis=thesis,
+            chunks=chunks,
         )
-        await self.connection.execute(
-            "INSERT OR IGNORE INTO thesis_snapshots VALUES (?, ?, ?)",
-            (thesis.thesis_id, thesis.version, thesis.model_dump_json()),
-        )
-        await self.connection.execute(
-            """
-            INSERT OR IGNORE INTO runs
-                (run_id, thesis_id, base_thesis_version, status)
-            VALUES (?, ?, ?, 'running')
-            """,
-            (run_id, thesis.thesis_id, thesis.version),
-        )
-        await self.connection.commit()
-        return ResearchState(run_id=run_id, thesis=thesis, chunks=chunks)
 
-    async def register_run(self, run_id: str, thesis: ThesisSnapshot) -> bool:
+    async def _update_run(
+        self,
+        run_id: str,
+        *,
+        status: RunStatus,
+        delta: ThesisDelta | None = None,
+        evidence_packs: list | None = None,
+        review: ReviewDecision | None = None,
+        committed_thesis_version: int | None = None,
+        error: str | None = None,
+        connection: aiosqlite.Connection | None = None,
+        commit: bool = True,
+    ) -> None:
+        target = connection or self.connection
+        await target.execute(
+            """
+            UPDATE runs SET
+                status = ?,
+                validated_delta_json = COALESCE(?, validated_delta_json),
+                evidence_packs_json = COALESCE(?, evidence_packs_json),
+                review_json = COALESCE(?, review_json),
+                committed_thesis_version = COALESCE(?, committed_thesis_version),
+                error = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE run_id = ?
+            """,
+            (
+                status.value,
+                delta.model_dump_json() if delta else None,
+                json.dumps([pack.model_dump(mode="json") for pack in evidence_packs])
+                if evidence_packs is not None
+                else None,
+                review.model_dump_json() if review else None,
+                committed_thesis_version,
+                error,
+                run_id,
+            ),
+        )
+        if commit:
+            await target.commit()
+
+    async def register_run(
+        self, run_id: str, thesis: ThesisSnapshot, disclosure_id: str
+    ) -> bool:
         cursor = await self.connection.execute(
             """
             INSERT OR IGNORE INTO runs
-                (run_id, thesis_id, base_thesis_version, status)
-            VALUES (?, ?, ?, 'running')
+                (run_id, thesis_id, disclosure_id, base_thesis_version, status)
+            VALUES (?, ?, ?, ?, 'running')
             """,
-            (run_id, thesis.thesis_id, thesis.version),
+            (run_id, thesis.thesis_id, disclosure_id, thesis.version),
         )
         await self.connection.commit()
         return cursor.rowcount == 1
@@ -372,10 +472,6 @@ class AgenticThesisWorkflow:
         await self.connection.execute(
             "INSERT INTO run_events (run_id, sequence, event_json) VALUES (?, ?, ?)",
             (run_id, sequence, json.dumps(event)),
-        )
-        await self.connection.execute(
-            "UPDATE runs SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE run_id = ?",
-            (event.get("status", "running"), run_id),
         )
         await self.connection.commit()
         return sequence
@@ -395,7 +491,9 @@ class AgenticThesisWorkflow:
     async def get_run(self, run_id: str) -> dict[str, Any] | None:
         cursor = await self.connection.execute(
             """
-            SELECT run_id, thesis_id, base_thesis_version, status
+            SELECT run_id, thesis_id, disclosure_id, base_thesis_version, status,
+                   validated_delta_json, evidence_packs_json, review_json,
+                   committed_thesis_version, error
             FROM runs WHERE run_id = ?
             """,
             (run_id,),
@@ -403,11 +501,21 @@ class AgenticThesisWorkflow:
         row = await cursor.fetchone()
         if row is None:
             return None
-        return dict(zip(("run_id", "thesis_id", "base_thesis_version", "status"), row))
+        keys = (
+            "run_id", "thesis_id", "disclosure_id", "base_thesis_version",
+            "status", "delta", "evidence_packs", "review",
+            "committed_thesis_version", "error",
+        )
+        result = dict(zip(keys, row))
+        for key in ("delta", "evidence_packs", "review"):
+            result[key] = json.loads(result[key]) if result[key] else None
+        result["evidence_packs"] = result["evidence_packs"] or []
+        return result
 
     async def list_runs(self, thesis_id: str | None = None) -> list[dict[str, Any]]:
         query = """
-            SELECT run_id, thesis_id, base_thesis_version, status
+            SELECT run_id, thesis_id, disclosure_id, base_thesis_version, status,
+                   committed_thesis_version, error
             FROM runs
         """
         params: tuple[str, ...] = ()
@@ -416,23 +524,32 @@ class AgenticThesisWorkflow:
             params = (thesis_id,)
         query += " ORDER BY updated_at DESC, run_id"
         cursor = await self.connection.execute(query, params)
-        keys = ("run_id", "thesis_id", "base_thesis_version", "status")
+        keys = (
+            "run_id", "thesis_id", "disclosure_id", "base_thesis_version",
+            "status", "committed_thesis_version", "error",
+        )
         return [dict(zip(keys, row)) for row in await cursor.fetchall()]
 
     async def create_thesis(self, thesis: ThesisSnapshot) -> bool:
-        cursor = await self.connection.execute(
-            "INSERT OR IGNORE INTO thesis_heads VALUES (?, ?)",
-            (thesis.thesis_id, thesis.version),
-        )
-        if cursor.rowcount != 1:
-            await self.connection.rollback()
-            return False
-        await self.connection.execute(
-            "INSERT INTO thesis_snapshots VALUES (?, ?, ?)",
-            (thesis.thesis_id, thesis.version, thesis.model_dump_json()),
-        )
-        await self.connection.commit()
-        return True
+        async with self.commit_lock, aiosqlite.connect(self.database) as transaction:
+            try:
+                await transaction.execute("BEGIN IMMEDIATE")
+                cursor = await transaction.execute(
+                    "INSERT OR IGNORE INTO thesis_heads VALUES (?, ?)",
+                    (thesis.thesis_id, thesis.version),
+                )
+                if cursor.rowcount != 1:
+                    await transaction.rollback()
+                    return False
+                await transaction.execute(
+                    "INSERT INTO thesis_snapshots VALUES (?, ?, ?)",
+                    (thesis.thesis_id, thesis.version, thesis.model_dump_json()),
+                )
+                await transaction.commit()
+                return True
+            except Exception:
+                await transaction.rollback()
+                raise
 
     async def get_thesis(self, thesis_id: str) -> ThesisSnapshot | None:
         cursor = await self.connection.execute(
@@ -445,6 +562,16 @@ class AgenticThesisWorkflow:
             WHERE heads.thesis_id = ?
             """,
             (thesis_id,),
+        )
+        row = await cursor.fetchone()
+        return ThesisSnapshot.model_validate_json(row[0]) if row else None
+
+    async def get_thesis_version(
+        self, thesis_id: str, version: int
+    ) -> ThesisSnapshot | None:
+        cursor = await self.connection.execute(
+            "SELECT snapshot_json FROM thesis_snapshots WHERE thesis_id = ? AND version = ?",
+            (thesis_id, version),
         )
         row = await cursor.fetchone()
         return ThesisSnapshot.model_validate_json(row[0]) if row else None
@@ -506,15 +633,68 @@ class AgenticThesisWorkflow:
         keys = ("document_id", "thesis_id", "accession", "filing_date", "source_url")
         return [dict(zip(keys, row)) for row in await cursor.fetchall()]
 
-    async def chunks_for_thesis(self, thesis_id: str) -> list[DisclosureChunk]:
+    async def get_disclosure(
+        self, thesis_id: str, document_id: str
+    ) -> DisclosureDocument | None:
         cursor = await self.connection.execute(
-            "SELECT chunks_json FROM disclosures WHERE thesis_id = ? ORDER BY filing_date, document_id",
+            """
+            SELECT document_id, thesis_id, accession, filing_date, source_url, raw_text
+            FROM disclosures WHERE thesis_id = ? AND document_id = ?
+            """,
+            (thesis_id, document_id),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return None
+        return DisclosureDocument.model_validate(
+            dict(
+                zip(
+                    (
+                        "document_id", "thesis_id", "accession", "filing_date",
+                        "source_url", "content",
+                    ),
+                    row,
+                )
+            )
+        )
+
+    async def chunks_for_disclosure(
+        self, thesis_id: str, document_id: str
+    ) -> list[DisclosureChunk]:
+        cursor = await self.connection.execute(
+            "SELECT chunks_json FROM disclosures WHERE thesis_id = ? AND document_id = ?",
+            (thesis_id, document_id),
+        )
+        row = await cursor.fetchone()
+        return [
+            DisclosureChunk.model_validate(chunk)
+            for chunk in json.loads(row[0])
+        ] if row else []
+
+    async def list_revisions(self, thesis_id: str) -> list[dict[str, Any]]:
+        cursor = await self.connection.execute(
+            """
+            SELECT run_id, thesis_id, disclosure_id, base_thesis_version,
+                   committed_thesis_version, validated_delta_json,
+                   evidence_packs_json, review_json
+            FROM runs
+            WHERE thesis_id = ? AND status = 'committed'
+            ORDER BY committed_thesis_version
+            """,
             (thesis_id,),
         )
         return [
-            DisclosureChunk.model_validate(chunk)
+            {
+                "run_id": row[0],
+                "thesis_id": row[1],
+                "disclosure_id": row[2],
+                "base_thesis_version": row[3],
+                "committed_thesis_version": row[4],
+                "delta": json.loads(row[5]),
+                "evidence_packs": json.loads(row[6]),
+                "review": json.loads(row[7]),
+            }
             for row in await cursor.fetchall()
-            for chunk in json.loads(row[0])
         ]
 
     async def configure_sec_monitor(
@@ -627,6 +807,7 @@ class AgenticThesisWorkflow:
                 config,
                 {"status": "failed", "error": error},
             )
+        await self._update_run(run_id, status=RunStatus.FAILED, error=error)
 
     async def advance_head(self, thesis_id: str) -> None:
         await self.connection.execute(
@@ -637,5 +818,6 @@ class AgenticThesisWorkflow:
 
     async def close(self) -> None:
         await self.connection.close()
+        await self.checkpoint_connection.close()
         if isinstance(self.retriever, HybridRetriever):
             self.retriever.close()

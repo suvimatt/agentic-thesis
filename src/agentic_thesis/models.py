@@ -11,6 +11,16 @@ class DeltaStatus(StrEnum):
     UNKNOWN = "unknown"
 
 
+class RunStatus(StrEnum):
+    RUNNING = "running"
+    AWAITING_REVIEW = "awaiting_review"
+    COMMITTED = "committed"
+    REJECTED = "rejected"
+    FAILED = "failed"
+    VERSION_CONFLICT = "version_conflict"
+    INVALID_REVIEW = "invalid_review"
+
+
 class ThesisClaim(BaseModel):
     claim_id: str
     statement: str
@@ -44,6 +54,14 @@ class DisclosureDocument(BaseModel):
     filing_date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
     source_url: str = ""
     content: str = Field(min_length=1, max_length=10_000_000)
+
+
+class DisclosureSummary(BaseModel):
+    document_id: str
+    thesis_id: str
+    accession: str
+    filing_date: str
+    source_url: str = ""
 
 
 class EvidenceItem(BaseModel):
@@ -86,8 +104,52 @@ class ReviewDecision(BaseModel):
     edited_delta: ThesisDelta | None = None
 
 
+class RunSummary(BaseModel):
+    run_id: str
+    thesis_id: str
+    disclosure_id: str
+    base_thesis_version: int
+    status: RunStatus
+    committed_thesis_version: int | None = None
+    error: str | None = None
+
+
+class ThesisRun(RunSummary):
+    thesis: ThesisSnapshot
+    delta: ThesisDelta | None = None
+    evidence_packs: list[EvidencePack] = Field(default_factory=list)
+    review: ReviewDecision | None = None
+    timings_ms: dict[str, float] = Field(default_factory=dict)
+    retrieval_timings_ms: dict[str, dict[str, float | bool]] = Field(
+        default_factory=dict
+    )
+
+
+class ThesisRevision(BaseModel):
+    run_id: str
+    thesis_id: str
+    disclosure_id: str
+    base_thesis_version: int
+    committed_thesis_version: int
+    delta: ThesisDelta
+    evidence_packs: list[EvidencePack]
+    review: ReviewDecision
+
+
+class SecMonitor(BaseModel):
+    thesis_id: str
+    cik: str
+    forms: list[str]
+    enabled: bool
+    last_accession: str | None = None
+    last_checked_at: str | None = None
+    last_error: str | None = None
+    last_imported: int = 0
+
+
 class ResearchState(BaseModel):
     run_id: str
+    disclosure_id: str
     thesis: ThesisSnapshot
     chunks: list[DisclosureChunk] = Field(default_factory=list)
     retrieved: dict[str, list[str]] = Field(default_factory=dict)

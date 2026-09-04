@@ -220,7 +220,7 @@ def create_app(
         if engine is None:
             await app.state.engine.close()
 
-    app = FastAPI(title="AgenticThesis", version="0.8.0", lifespan=lifespan)
+    app = FastAPI(title="AgenticThesis", version="0.9.0", lifespan=lifespan)
     if engine is not None:
         app.state.engine = (
             engine

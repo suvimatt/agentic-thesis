@@ -16,7 +16,7 @@ from agentic_thesis.models import (
     ThesisRun,
     ThesisSnapshot,
 )
-from agentic_thesis.rag import HybridRetriever, chunk_filing
+from agentic_thesis.rag import HybridRetriever, canonical_text_from_chunks, chunk_filing
 from agentic_thesis.workflow import AgenticThesisWorkflow
 
 
@@ -82,7 +82,11 @@ class AgenticThesisEngine:
         )
         if not chunks:
             raise ValueError("disclosure contains no text")
-        if not await self._workflow.add_disclosure(document, chunks):
+        if not await self._workflow.add_disclosure(
+            document,
+            canonical_text_from_chunks(chunks),
+            chunks,
+        ):
             raise EngineConflictError("disclosure already exists")
         return len(chunks)
 

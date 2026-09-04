@@ -1,182 +1,156 @@
 [
   {
     "query": "What caused Apple's Greater China revenue to fall in 2024?",
-    "gold_chunk_id": "aapl-2024:0c86bf1fa9ba6c00",
     "anchor": "Greater China net sales decreased",
     "category": "semantic",
     "split": "calibration"
   },
   {
     "query": "How did Products and Services gross margin percentages compare in 2024?",
-    "gold_chunk_id": "aapl-2024:a12c539482a401f6",
     "anchor": "Services 73.9 %",
     "category": "numeric",
     "split": "calibration"
   },
   {
     "query": "Which component sourcing arrangement creates concentration risk?",
-    "gold_chunk_id": "aapl-2024:7fae32d7c33baa20",
     "anchor": "certain components are currently obtained from single or limited sources",
     "category": "risk",
     "split": "calibration"
   },
   {
     "query": "How can rivals with a larger device ecosystem pressure Apple?",
-    "gold_chunk_id": "aapl-2024:fb837202fcc36dc0",
     "anchor": "installed base of active devices",
     "category": "semantic",
     "split": "held_out"
   },
   {
     "query": "What share of 2024 sales came through direct versus indirect distribution?",
-    "gold_chunk_id": "aapl-2024:53eab38cd997ee08",
     "anchor": "direct and indirect distribution channels accounted for 38% and 62%",
     "category": "numeric",
     "split": "calibration"
   },
   {
     "query": "Where are most Apple supplier manufacturing and assembly facilities located?",
-    "gold_chunk_id": "aapl-2024:862e37e8401eb479",
     "anchor": "majority of the Company’s supplier facilities",
     "category": "risk",
     "split": "held_out"
   },
   {
     "query": "What past semiconductor market condition limited component availability?",
-    "gold_chunk_id": "aapl-2024:b000c39d74a9e72b",
     "anchor": "global semiconductor industry has in the past experienced high demand",
     "category": "risk",
     "split": "calibration"
   },
   {
     "query": "What new safety exposure can generative features introduce for users?",
-    "gold_chunk_id": "aapl-2024:651fcf18cd96b110",
     "anchor": "artificial intelligence features",
     "category": "semantic",
     "split": "held_out"
   },
   {
     "query": "Why do health and financial information create extra privacy obligations?",
-    "gold_chunk_id": "aapl-2024:eea2c920682de62a",
     "anchor": "Health data and financial data are subject to additional privacy",
     "category": "regulatory",
     "split": "calibration"
   },
   {
     "query": "What App Store distribution and fee changes did Apple introduce for EU compliance?",
-    "gold_chunk_id": "aapl-2024:d18fde7fbed2f63c",
     "anchor": "new business terms and alternative fee structures",
     "category": "regulatory",
     "split": "held_out"
   },
   {
     "query": "How did the European Commission respond to Apple's DMA compliance plan?",
-    "gold_chunk_id": "aapl-2024:31658a9e6bcea04f",
     "anchor": "compliance plan in response to feedback and engagement with the European Commission",
     "category": "regulatory",
     "split": "calibration"
   },
   {
     "query": "What was Apple's 2024 research and development expense?",
-    "gold_chunk_id": "aapl-2024:a9f12c8815efb9a3",
     "anchor": "Research and development expense ( 31,370 )",
     "category": "numeric",
     "split": "held_out"
   },
   {
     "query": "How dependent is Apple manufacturing on outsourced partners outside the United States?",
-    "gold_chunk_id": "aapl-2024:b8ef104653e8ef21",
     "anchor": "substantially all of the Company’s manufacturing",
     "category": "risk",
     "split": "calibration"
   },
   {
     "query": "Which businesses drove Services sales growth in 2024?",
-    "gold_chunk_id": "aapl-2024:a12c539482a401f6",
     "anchor": "Services net sales increased during 2024",
     "category": "semantic",
     "split": "calibration"
   },
   {
     "query": "What improved the Products gross margin percentage in 2024?",
-    "gold_chunk_id": "aapl-2024:a12c539482a401f6",
     "anchor": "Products gross margin percentage increased during 2024",
     "category": "semantic",
     "split": "held_out"
   },
   {
     "query": "What were Apple's total revenue and net income in fiscal 2023?",
-    "gold_chunk_id": "aapl-2023:e74e4d0d2a632428",
     "anchor": "total net sales were $383.3 billion",
     "category": "numeric",
     "split": "calibration"
   },
   {
     "query": "How much common stock did Apple repurchase during 2023?",
-    "gold_chunk_id": "aapl-2023:ee3ff64c52d88210",
     "anchor": "repurchased $76.6 billion",
     "category": "numeric",
     "split": "held_out"
   },
   {
     "query": "How much commercial paper was outstanding at the end of fiscal 2023?",
-    "gold_chunk_id": "aapl-2023:c8da552fb8da51ff",
     "anchor": "$6.0 billion of commercial paper outstanding",
     "category": "numeric",
     "split": "calibration"
   },
   {
     "query": "What percentage of trade receivables came from cellular carriers in 2023?",
-    "gold_chunk_id": "aapl-2023:801aa70168814801",
     "anchor": "third-party cellular network carriers accounted for 41 %",
     "category": "numeric",
     "split": "held_out"
   },
   {
     "query": "By how much did Services net sales grow in 2023?",
-    "gold_chunk_id": "aapl-2023:93ff33d27fa1ec14",
     "anchor": "Services net sales increased 9% or $7.1 billion",
     "category": "numeric",
     "split": "calibration"
   },
   {
     "query": "Why did the Services gross margin percentage weaken in 2023?",
-    "gold_chunk_id": "aapl-2023:92db73f1562f0086",
     "anchor": "Services gross margin percentage decreased during 2023",
     "category": "semantic",
     "split": "held_out"
   },
   {
     "query": "How much did Greater China net sales decline in 2023?",
-    "gold_chunk_id": "aapl-2023:bd8f740a12874fae",
     "anchor": "Greater China net sales decreased 2% or $1.6 billion",
     "category": "numeric",
     "split": "calibration"
   },
   {
     "query": "How far ahead does Apple normally hedge forecast revenue and inventory currency exposure?",
-    "gold_chunk_id": "aapl-2023:36a4676f9dbb4ad1",
     "anchor": "forecasted foreign currency exposure associated with revenue and inventory purchases",
     "category": "risk",
     "split": "held_out"
   },
   {
     "query": "In which fiscal quarter has Apple historically recorded higher net sales?",
-    "gold_chunk_id": "aapl-2023:ef5ac10bdb80369e",
     "anchor": "historically experienced higher net sales in its first quarter",
     "category": "lexical",
     "split": "calibration"
   },
   {
     "query": "What happens to older channel inventory before a newer product launches?",
-    "gold_chunk_id": "aapl-2023:20379af2b35e0775",
     "anchor": "channel inventory of an older product often declines",
     "category": "semantic",
     "split": "held_out"
   },
   {
     "query": "Which receivables and supplier prepayments expose Apple to counterparty credit risk?",
-    "gold_chunk_id": "aapl-2023:3984db5de4138597",
     "anchor": "exposed to credit risk on its trade accounts receivable",
     "category": "risk",
     "split": "calibration"

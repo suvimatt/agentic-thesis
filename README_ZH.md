@@ -24,7 +24,7 @@ AgenticThesis 是一个开源、stateful 的 Python engine，用来判断公司�
 - `agentic-thesis serve` 使用 SQLite 和 embedded Qdrant 运行 self-host 应用；
 - `AgenticThesisEngine` 是其他 Python 应用使用的受支持 interface。
 
-v0.8 中，每个 run 只把一份已保存的 disclosure 绑定到一个 Thesis 版本。生成的 `ThesisRun` 在分析、Human Review、拒绝、失败或提交后都可查询；批准后还会创建 `ThesisRevision`，把 disclosure、校验后的 delta、证据、审核决定和提交后的 Thesis 版本连接起来。
+v0.9 中，每个 run 仍然只把一份已保存的 disclosure 绑定到一个 Thesis 版本。金融财报现在会解析成保留结构的检索窗口，而 citation 始终是完整、精确的句子、列表项或表格行；系统也会检索投资者为每条 claim 写下的反证条件。
 
 对投资者来说，结果仍然很简单：长期记住自己为什么投资，并在公司出现新事实时检查原来的理由是否还成立。
 
@@ -99,10 +99,16 @@ AGENTIC_THESIS_SEC_USER_AGENT="AgenticThesis your-email@example.com"
 ### 2. 启动应用
 
 ```bash
-uvx agentic-thesis==0.8.0 serve
+uvx agentic-thesis==0.9.0 serve
 ```
 
 打开 [http://127.0.0.1:8000](http://127.0.0.1:8000)。首次启动已经准备好一份 Apple 公司 Thesis 和两份公司报告。你的公司 Theses、原始资料、vector index、历史检查、待确认结果和已经批准的更新都会保存在 `~/.agentic-thesis/`，关闭并重新启动后仍可继续使用。
+
+v0.9 使用新的本地 schema，且有意不迁移早期版本数据。请把已有 data directory 留作备份，并让 v0.9 使用一个新目录：
+
+```bash
+uvx agentic-thesis==0.9.0 serve --data-dir ~/.agentic-thesis-v09
+```
 
 在浏览器中输入公司名称、你为什么看好这门生意、这个理由为什么重要，以及一个能够证明它错了的事实，即可创建新的公司 Thesis，不需要理解 JSON 或内部 schema。
 
@@ -123,7 +129,7 @@ python3 -m venv .venv
 从 PyPI 安装 engine：
 
 ```bash
-python -m pip install "agentic-thesis==0.8.0"
+python -m pip install "agentic-thesis==0.9.0"
 ```
 
 `open_local` 默认提供 SQLite checkpoint/state adapter 和可持久化的 embedded Qdrant index。调用者传入模型函数，并使用 `agentic_thesis` 导出的领域模型：
@@ -202,24 +208,25 @@ await engine.close()
 | 边界 | 职责 | 实现 |
 | --- | --- | --- |
 | 接口 | 管理 theses 和 disclosures、检查指定 SEC filing types、异步启动任务、重放进度并接受审核决定 | FastAPI、后台 `asyncio` tasks、durable SSE |
-| 检索 | 在当前 run 绑定的 disclosure 中找到与 claim 相关的段落 | 确定性固定长度切块及 section 标签、BM25、本地持久化 Qdrant vector、RRF；仅在 BM25/vector top-1 不同且 top-3 交集少于 2 个 chunk 时调用 API rerank |
-| Working Context | 为每条 claim 提供最小、充分、可定位来源的证据 | query-conditioned extractive `EvidencePack`、每条 claim 固定 2,000-token 预算、evidence ID 和原文偏移 |
+| 检索 | 在当前 run 绑定的 disclosure 中找到与 claim 相关的上下文 | 由完整句子、列表项和带上下文表格行组成的确定性结构化窗口；claim 和 falsifier query；BM25、本地持久化 Qdrant vector、RRF 和条件式 API rerank |
+| Working Context | 为每条 claim 提供最小、充分、可定位来源的证据 | query-conditioned `EvidencePack`，在每条 claim 的 2,000-token 预算内装入完整 citation span，并保存绑定 span 的 evidence ID 和精确原文偏移 |
 | 语义分析 | 只根据提供的证据比较每条 Thesis claim | API Structured Outputs → 类型化 `ThesisDelta` |
-| 完整性门禁 | 阻止无依据结论和不安全状态变更 | quote/source 校验、falsifier 校验、exact-claim 校验、Human Review |
-| 持久状态 | 恢复运行中或暂停的任务并保存权威 Thesis 历史 | LangGraph SQLite checkpoint、持久化 `ThesisRun` 与 events、不可变 `ThesisSnapshot`、可查询 `ThesisRevision`、thesis head |
+| 完整性门禁 | 阻止无依据结论和不安全状态变更 | 精确 citation-span/source 校验、falsifier 校验、exact-claim 校验、Human Review |
+| 持久状态 | 恢复运行中或暂停的任务并保存权威 Thesis 历史 | canonical disclosures、LangGraph SQLite checkpoint、持久化 `ThesisRun` 与 events、不可变 `ThesisSnapshot`、可查询 `ThesisRevision`、thesis head |
 | 提交 | 只有 base version 仍为当前版本时才能应用已批准的 delta | SQLite compare-and-swap → `vN+1` 或 `version_conflict` |
 
-两份仓库内 SEC Filing 经确定性 HTML 提取后共有 97,675 个 `cl100k_base` token。模型调用不会接收完整 Filing，而只接收逐条 claim 构建、带引用的 `EvidencePack`。这使 **Context**（当前调用的临时工作证据）、**Memory**（版本化 Thesis）和 **Workflow State**（可恢复执行状态）彼此分离。
+两份仓库内 SEC Filing 经结构化提取后共有 97,680 个 `cl100k_base` token。检索使用 223 个有界窗口提供上下文，但 citation 指向 2,547 个完整原子 span，并带有精确 canonical offset。模型调用不会接收完整 Filing，而只接收逐条 claim 构建、带引用的 `EvidencePack`。这使 **Context**（当前调用的临时工作证据）、**Memory**（版本化 Thesis）和 **Workflow State**（可恢复执行状态）彼此分离。
 
 架构图的可编辑源文件是 [`docs/agentic-thesis-architecture.html`](docs/agentic-thesis-architecture.html)，README 展示其导出的 SVG。
 
 ## 已实现能力
 
-- 确定性的 SEC HTML 提取、带 section metadata 的固定长度切块、字符偏移和稳定 chunk ID；
-- BM25 + 持久化 Qdrant local vector retrieval 和 Reciprocal Rank Fusion；只有新增 chunk 才调用 embedding，且只有 BM25/vector top-1 不同且 top-3 交集少于 2 个 chunk 时才调用 listwise API reranking；
-- 带硬性 token budget、来源覆盖和 retained evidence ID 的 extractive Context compression；
+- 确定性的 SEC HTML 提取：排除隐藏 inline-XBRL metadata，并保留 section、句子、列表和表格行结构；
+- 由完整 citation span 组成、而不是按 token count 截断的有界 retrieval windows，带稳定 ID 和精确 canonical offset；
+- claim 与 falsifier 共同检索：BM25 + 持久化 Qdrant vector retrieval 和 Reciprocal Rank Fusion；只有新增 window 才调用 embedding，且只有 BM25/vector top-1 不同且 top-3 交集少于 2 个 window 时才调用 listwise API reranking；
+- 带硬性 token budget、完整 span 选择、来源覆盖和 retained evidence ID 的 extractive Context packing；
 - 使用 OpenAI Structured Outputs 实现四态 `ThesisDelta` contract；
-- quote-to-source 引用校验；无依据输出会降级为 `unknown`；
+- 精确 span-to-source 引用校验；无依据或伪造 offset 的输出会降级为 `unknown`；
 - 六节点 LangGraph、Human Review interrupt 和 SQLite checkpoint/resume；
 - 不可变 Thesis snapshot 和 compare-and-swap 冲突保护；
 - 一份 disclosure 对应一个 run 的执行模型、类型化并持久化的 `ThesisRun` 结果，以及可查询的已提交 `ThesisRevision` 历史；
@@ -232,28 +239,29 @@ await engine.close()
 
 ## 验证结果
 
-2026-09-03 在仓库内 fixture 上的观测结果：
+2026-09-04 在仓库内 fixture 上的观测结果：
 
 | 检查项 | 观测结果 |
 | --- | ---: |
-| 测试 | 20 passed |
+| 测试 | 21 passed |
 | Wheel build | passed |
-| 2023 提取 tokens / chunks | 48,923 / 109 |
-| 2024 提取 tokens / chunks | 48,752 / 110 |
+| 2023 提取 tokens / retrieval windows | 48,777 / 111 |
+| 2024 提取 tokens / retrieval windows | 48,903 / 112 |
+| 原子 citation spans / 精确 offset 还原 | 2,547 / 100% |
 | 分类 gold queries | 26：15 calibration / 11 held-out |
 | 人工标注 Thesis delta cases | 4 条，覆盖 Apple、Microsoft 和全部四种状态 |
-| BM25 / fake-vector / hybrid Recall@5 | 0.846 / 0.538 / 0.769 |
-| always-rerank / conditional-rerank Recall@5 | 0.885 / 0.846 |
-| BM25 / vector / hybrid / always / conditional MRR | 0.581 / 0.369 / 0.544 / 0.663 / 0.635 |
+| BM25 / fake-vector / hybrid Recall@5 | 0.923 / 0.577 / 0.885 |
+| always-rerank / conditional-rerank Recall@5 | 0.962 / 0.962 |
+| BM25 / vector / hybrid / always / conditional MRR | 0.653 / 0.438 / 0.628 / 0.750 / 0.756 |
 | Conditional rerank 调用 | 15 / 26 |
-| held-out conditional Recall@5 / MRR | 1.00 / 0.652 |
-| 伪造引用 | 降级为 `unknown` |
+| held-out conditional Recall@5 / MRR | 1.00 / 0.720 |
+| 伪造 quote 或 offset | 降级为 `unknown` |
 | 重启与恢复 | 使用相同 run ID 提交 v2 |
 | 旧版本写入 | 返回 `version_conflict` / HTTP 409 |
 
 `evals/gold.json` 的 26 条 case 横跨两份 Apple filing，覆盖 lexical、numeric、semantic、risk 和 regulatory 检索问题。`evals/delta_gold.json` 的 4 条 case 覆盖 Apple、Microsoft 和全部四种 delta 状态，并包含 Apple 的连续两期 disclosure。确定性测试不调用外部模型，只验证数据集与检索 policy，不声称模型准确率。
 
-仓库中的 `evals/live_results.json` 保留了较早一次覆盖两份 Filing、219 个 chunks、5 条 query 的真实 API 运行，使用 `qwen3.7-text-embedding` 和 `gpt-5.6-luna`：
+仓库中的 `evals/live_results.json` 保留了较早一次覆盖两份 Filing、219 个旧版 chunks、5 条 query 的真实 API 运行，使用 `qwen3.7-text-embedding` 和 `gpt-5.6-luna`：
 
 | Live 检查项 | 观测结果 |
 | --- | ---: |
@@ -265,7 +273,7 @@ await engine.close()
 | 五条 query rerank evaluation | 38.17 s |
 | 三条 claim structured analysis | 16.18 s |
 
-较早的 reranker 保住了 Recall@5，但没有改善 gold position，其中一条从第 4 降到第 5。仓库内这份结果早于 v0.8 Thesis delta evaluation，因此目前不声称 live status accuracy 或 grounded-evidence 结果。这些耗时只代表一次历史运行，不是 latency benchmark 或 production SLO。
+较早的 reranker 保住了 Recall@5，但没有改善 gold position，其中一条从第 4 降到第 5。这份报告早于 v0.9 结构化 chunking 和当前 26 条检索 evaluation，因此仅作为历史记录：目前不声称当前 live model quality。这些耗时只代表一次运行，不是 latency benchmark 或 production SLO。
 
 重新运行 live evaluation：
 
@@ -322,7 +330,7 @@ curl -X POST http://localhost:8000/theses/aapl-primary/sync
 - scheduler 只是一个每小时判断本地 due state、每 24 小时最多自动成功访问 SEC 一次的进程内 `asyncio` loop，不是分布式任务系统或通知服务；
 - Qdrant 以 embedded 模式运行，并把 vectors 持久化到用户数据目录；SQLite 持久化 Workflow 和 Thesis 状态；
 - 没有 portfolio management、valuation、Multi-Agent role、distributed scheduler 或 queue；
-- 检索 gold set 包含 Apple 两份 filing 的 26 条问题；四条 Thesis delta case 已加入 Microsoft，但仍缺少更广的公司覆盖和当前 v0.8 live API 结果；
+- 检索 gold set 包含 Apple 两份 filing 的 26 条问题；四条 Thesis delta case 已加入 Microsoft，但仍缺少更广的公司覆盖和一份已完成的当前 v0.9 live API 结果；
 - 没有实测 throughput、p50、p95 或 production-readiness 声明。
 
 ## 开源协议

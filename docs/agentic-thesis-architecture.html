@@ -25,12 +25,12 @@
 </head>
 <body>
   <main class="frame">
-    <p class="eyebrow">Architecture · AgenticThesis v0.8</p>
+    <p class="eyebrow">Architecture · AgenticThesis v0.9</p>
     <h1>From one new disclosure to an auditable thesis revision</h1>
 
     <svg viewBox="0 0 1280 760" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="agentic-thesis-architecture-title agentic-thesis-architecture-desc">
-      <title id="agentic-thesis-architecture-title">AgenticThesis v0.8 system architecture</title>
-      <desc id="agentic-thesis-architecture-desc">Architecture showing one stored disclosure bound to a typed engine run, a stateful LangGraph workflow with Human Review, and an auditable SQLite revision record linking evidence and decisions to immutable thesis versions.</desc>
+      <title id="agentic-thesis-architecture-title">AgenticThesis v0.9 system architecture</title>
+      <desc id="agentic-thesis-architecture-desc">Architecture showing one disclosure parsed into structure-aware retrieval windows and exact citation spans, searched against claims and falsifiers, reviewed by a human, and committed as an auditable thesis revision.</desc>
       <defs>
         <style>@import url('https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500;600&amp;display=swap');</style>
         <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#667069"/></marker>
@@ -85,7 +85,7 @@
 
       <!-- Collection invariant -->
       <text x="640" y="112" fill="#276749" font-size="16" font-style="italic" font-family="ui-serif,Georgia,serif">Every run names exactly one new disclosure.</text>
-      <text x="640" y="136" fill="#667069" font-size="16" font-style="italic" font-family="ui-serif,Georgia,serif">No new filing? Persist the check and skip the model.</text>
+      <text x="640" y="136" fill="#667069" font-size="16" font-style="italic" font-family="ui-serif,Georgia,serif">Retrieval keeps context; citations stay atomic.</text>
 
       <!-- Node 1: Sources -->
       <rect x="40" y="88" width="240" height="80" rx="6" fill="#f6f8f4"/>
@@ -93,7 +93,7 @@
       <rect x="52" y="100" width="32" height="12" rx="2" fill="transparent" stroke="rgba(23,32,25,.30)" stroke-width=".8"/>
       <text x="68" y="108" fill="#667069" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">DATA</text>
       <text x="160" y="132" fill="#172019" font-size="12" font-weight="600" font-family="ui-sans-serif,system-ui,sans-serif" text-anchor="middle">Company Disclosures</text>
-      <text x="160" y="152" fill="#667069" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">SEC EDGAR · manual HTML / TXT</text>
+      <text x="160" y="152" fill="#667069" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">SEC HTML structure · manual HTML / TXT</text>
 
       <!-- Node 2: Collection -->
       <rect x="320" y="88" width="240" height="80" rx="6" fill="#f6f8f4"/>
@@ -118,8 +118,8 @@
       <rect x="332" y="292" width="32" height="12" rx="2" fill="transparent" stroke="rgba(23,32,25,.40)" stroke-width=".8"/>
       <text x="348" y="300" fill="#172019" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">RAG</text>
       <text x="420" y="324" fill="#172019" font-size="12" font-weight="600" font-family="ui-sans-serif,system-ui,sans-serif" text-anchor="middle">Hybrid Retrieval</text>
-      <text x="420" y="344" fill="#667069" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">BM25 + Qdrant · RRF · API rerank</text>
-      <text x="420" y="360" fill="#667069" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">thesis claims × one bound disclosure</text>
+      <text x="420" y="344" fill="#667069" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">structure windows · BM25 + Qdrant</text>
+      <text x="420" y="360" fill="#667069" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">claim + falsifier · RRF · rerank</text>
 
       <!-- Node 5: EvidencePack -->
       <rect x="560" y="280" width="200" height="96" rx="6" fill="#f6f8f4"/>
@@ -127,8 +127,8 @@
       <rect x="572" y="292" width="32" height="12" rx="2" fill="transparent" stroke="rgba(39,103,73,.55)" stroke-width=".8"/>
       <text x="588" y="300" fill="#276749" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">CTX</text>
       <text x="660" y="324" fill="#172019" font-size="12" font-weight="600" font-family="ui-sans-serif,system-ui,sans-serif" text-anchor="middle">EvidencePack</text>
-      <text x="660" y="344" fill="#667069" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">per-claim · extractive · ≤2,000 tokens</text>
-      <text x="660" y="360" fill="#667069" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">source offsets · retained evidence IDs</text>
+      <text x="660" y="344" fill="#667069" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">sentence · list item · table row</text>
+      <text x="660" y="360" fill="#667069" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">exact spans · whole-atom token packing</text>
 
       <!-- Node 6: Structured analysis -->
       <rect x="800" y="280" width="200" height="96" rx="6" fill="#f6f8f4"/>
@@ -145,7 +145,7 @@
       <rect x="1052" y="292" width="32" height="12" rx="2" fill="transparent" stroke="rgba(23,32,25,.40)" stroke-width=".8"/>
       <text x="1068" y="300" fill="#172019" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">RULE</text>
       <text x="1120" y="324" fill="#172019" font-size="12" font-weight="600" font-family="ui-sans-serif,system-ui,sans-serif" text-anchor="middle">Integrity Gate</text>
-      <text x="1120" y="344" fill="#667069" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">quote / source</text>
+      <text x="1120" y="344" fill="#667069" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">exact span / source</text>
       <text x="1120" y="360" fill="#667069" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">falsifier · exact claims</text>
 
       <!-- Node 8: Human Review and commit -->
@@ -162,7 +162,7 @@
       <rect x="332" y="604" width="32" height="12" rx="2" fill="transparent" stroke="rgba(39,103,73,.55)" stroke-width=".8"/>
       <text x="348" y="612" fill="#276749" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">DB</text>
       <text x="760" y="628" fill="#172019" font-size="12" font-weight="600" font-family="ui-sans-serif,system-ui,sans-serif" text-anchor="middle">SQLite Durable State</text>
-      <text x="760" y="648" fill="#667069" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">bound runs · validated deltas · evidence · review decisions</text>
+      <text x="760" y="648" fill="#667069" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">canonical disclosures · exact evidence · validated deltas · review decisions</text>
       <text x="760" y="664" fill="#667069" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">replayable events · checkpoints · immutable snapshots + heads</text>
 
       <!-- Legend -->

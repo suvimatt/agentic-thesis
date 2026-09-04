@@ -24,7 +24,7 @@ The same Python distribution provides two entry points:
 - `agentic-thesis serve` runs the self-hosted application with SQLite and embedded Qdrant;
 - `AgenticThesisEngine` is the supported interface for Python applications.
 
-In v0.8, one run binds exactly one stored disclosure to one thesis version. The resulting `ThesisRun` remains queryable through analysis, Human Review, rejection, failure, or commit; an approved run also creates a `ThesisRevision` that links the disclosure, validated delta, evidence, review decision, and committed thesis version.
+In v0.9, one run still binds exactly one stored disclosure to one thesis version. Financial filings are now parsed into structure-aware retrieval windows while citations remain complete, exact sentences, list items, or table rows. Claim retrieval also searches the facts the investor said would disprove each claim.
 
 For investors, the outcome is simple: remember why you invested and notice when new facts challenge those reasons.
 
@@ -99,15 +99,15 @@ AGENTIC_THESIS_SEC_USER_AGENT="AgenticThesis your-email@example.com"
 ### 2. Start the application
 
 ```bash
-uvx agentic-thesis==0.8.0 serve
+uvx agentic-thesis==0.9.0 serve
 ```
 
 Open [http://127.0.0.1:8000](http://127.0.0.1:8000). The first start includes a ready-to-use Apple company thesis and two filings. Your company theses, source documents, vector index, checks, pending reviews, and approved updates remain under `~/.agentic-thesis/` after you close and restart the app.
 
-v0.8 intentionally does not migrate v0.7 data. If `~/.agentic-thesis/` contains a v0.7 SQLite database, keep it as a backup and start v0.8 with a fresh directory:
+v0.9 uses a new local schema and intentionally does not migrate earlier data. Keep an existing data directory as a backup and start v0.9 with a fresh directory:
 
 ```bash
-uvx agentic-thesis==0.8.0 serve --data-dir ~/.agentic-thesis-v08
+uvx agentic-thesis==0.9.0 serve --data-dir ~/.agentic-thesis-v09
 ```
 
 Create another company thesis in the browser by entering the company, each reason you believe in the business, why it matters, and one fact that would prove it wrong. No JSON or schema knowledge is required.
@@ -129,7 +129,7 @@ The test suite uses deterministic retrieval and model substitutes where appropri
 Install the engine from PyPI:
 
 ```bash
-python -m pip install "agentic-thesis==0.8.0"
+python -m pip install "agentic-thesis==0.9.0"
 ```
 
 `open_local` supplies the default SQLite checkpoint/state adapter and persistent embedded Qdrant index. Callers provide the model functions and use domain models exported from `agentic_thesis`:
@@ -208,24 +208,25 @@ The system has one application-owned workflow, not a collection of autonomous ag
 | Boundary | Responsibility | Implementation |
 | --- | --- | --- |
 | Interface | Manage theses and disclosures, poll selected SEC filing types, start work asynchronously, replay progress, and accept review decisions | FastAPI, background `asyncio` tasks, durable SSE |
-| Retrieval | Find claim-relevant passages within the run's bound disclosure | deterministic section-labelled fixed-size chunks, BM25, embedded persistent Qdrant vectors, RRF, API rerank only when BM25/vector top-1 differ and top-3 overlap is below 2 |
-| Working Context | Give each claim the smallest sufficient, source-addressable evidence | query-conditioned extractive `EvidencePack`, fixed 2,000-token per-claim budget, evidence IDs and source offsets |
+| Retrieval | Find claim-relevant context within the run's bound disclosure | deterministic structure-aware windows made from intact sentences, list items, and contextualized table rows; claim and falsifier queries; BM25, embedded persistent Qdrant vectors, RRF, and conditional API rerank |
+| Working Context | Give each claim the smallest sufficient, source-addressable evidence | query-conditioned `EvidencePack` that packs whole citation spans within a 2,000-token per-claim budget, with span-bound evidence IDs and exact source offsets |
 | Semantic analysis | Compare every thesis claim with supplied evidence only | API Structured Outputs → typed `ThesisDelta` |
-| Integrity gates | Prevent unsupported conclusions or unsafe state changes | quote/source validation, falsifier validation, exact-claim validation, Human Review |
-| Durable state | Resume active or paused runs and preserve authoritative thesis history | LangGraph SQLite checkpoints, durable `ThesisRun` records and events, immutable `ThesisSnapshot`s, queryable `ThesisRevision`s, thesis head |
+| Integrity gates | Prevent unsupported conclusions or unsafe state changes | exact citation-span/source validation, falsifier validation, exact-claim validation, Human Review |
+| Durable state | Resume active or paused runs and preserve authoritative thesis history | canonical disclosures, LangGraph SQLite checkpoints, durable `ThesisRun` records and events, immutable `ThesisSnapshot`s, queryable `ThesisRevision`s, thesis head |
 | Commit | Apply an approved delta only if its base version is still current | SQLite compare-and-swap → `vN+1` or `version_conflict` |
 
-The two checked-in SEC filings contain 97,675 `cl100k_base` tokens after deterministic HTML extraction. A model call never receives the full filings: it receives a per-claim, cited `EvidencePack`. This keeps **Context** (temporary working evidence), **Memory** (versioned thesis), and **Workflow State** (resumable execution) separate.
+The two checked-in SEC filings contain 97,680 `cl100k_base` tokens after structure-aware extraction. Retrieval uses 223 bounded windows for context, but citations resolve to 2,547 intact atomic spans with exact canonical offsets. A model call never receives a full filing: it receives a per-claim, cited `EvidencePack`. This keeps **Context** (temporary working evidence), **Memory** (versioned thesis), and **Workflow State** (resumable execution) separate.
 
 The editable diagram source is [`docs/agentic-thesis-architecture.html`](docs/agentic-thesis-architecture.html); the README renders its exported SVG.
 
 ## Implemented Capabilities
 
-- deterministic SEC HTML extraction, fixed-size chunks with section metadata, character offsets, and stable chunk IDs;
-- BM25 + persistent Qdrant local vector retrieval and Reciprocal Rank Fusion; only new chunks are embedded, with listwise API reranking only when BM25/vector top-1 differ and top-3 overlap is below 2;
-- extractive Context compression with a hard token budget, source coverage, and retained evidence IDs;
+- deterministic SEC HTML extraction that removes hidden inline-XBRL metadata and preserves section, sentence, list, and table-row structure;
+- bounded retrieval windows made from intact citation spans rather than token-count slicing, with stable IDs and exact canonical offsets;
+- claim-and-falsifier retrieval through BM25 + persistent Qdrant vectors and Reciprocal Rank Fusion; only new windows are embedded, with listwise API reranking only when BM25/vector top-1 differ and top-3 overlap is below 2;
+- extractive Context packing with a hard token budget, whole-span selection, source coverage, and retained evidence IDs;
 - OpenAI Structured Outputs for the four-state `ThesisDelta` contract;
-- quote-to-source citation validation; unsupported output is downgraded to `unknown`;
+- exact span-to-source citation validation; unsupported or offset-forged output is downgraded to `unknown`;
 - a six-node LangGraph with Human Review interrupt and SQLite checkpoint/resume;
 - immutable thesis snapshots and compare-and-swap conflict protection;
 - one-disclosure-per-run execution with typed, durable `ThesisRun` outcomes and queryable committed `ThesisRevision` history;
@@ -238,28 +239,29 @@ The editable diagram source is [`docs/agentic-thesis-architecture.html`](docs/ag
 
 ## Verified Results
 
-Observed on the checked-in fixtures on 2026-09-03:
+Observed on the checked-in fixtures on 2026-09-04:
 
 | Check | Observed result |
 | --- | ---: |
-| Tests | 20 passed |
+| Tests | 21 passed |
 | Wheel build | passed |
-| 2023 extracted tokens / chunks | 48,923 / 109 |
-| 2024 extracted tokens / chunks | 48,752 / 110 |
+| 2023 extracted tokens / retrieval windows | 48,777 / 111 |
+| 2024 extracted tokens / retrieval windows | 48,903 / 112 |
+| Atomic citation spans / exact offset reconstruction | 2,547 / 100% |
 | Categorized gold queries | 26: 15 calibration / 11 held-out |
 | Human-labelled thesis-delta cases | 4 across Apple and Microsoft; all four statuses |
-| BM25 / fake-vector / hybrid Recall@5 | 0.846 / 0.538 / 0.769 |
-| Always-rerank / conditional-rerank Recall@5 | 0.885 / 0.846 |
-| BM25 / vector / hybrid / always / conditional MRR | 0.581 / 0.369 / 0.544 / 0.663 / 0.635 |
+| BM25 / fake-vector / hybrid Recall@5 | 0.923 / 0.577 / 0.885 |
+| Always-rerank / conditional-rerank Recall@5 | 0.962 / 0.962 |
+| BM25 / vector / hybrid / always / conditional MRR | 0.653 / 0.438 / 0.628 / 0.750 / 0.756 |
 | Conditional rerank calls | 15 / 26 |
-| Held-out conditional Recall@5 / MRR | 1.00 / 0.652 |
-| Forged citation | downgraded to `unknown` |
+| Held-out conditional Recall@5 / MRR | 1.00 / 0.720 |
+| Forged quote or offset | downgraded to `unknown` |
 | Restart/resume | committed v2 from the same run ID |
 | Stale version | rejected with `version_conflict` / HTTP 409 |
 
 The 26 cases in `evals/gold.json` cover lexical, numeric, semantic, risk, and regulatory retrieval questions across both Apple filings. The four cases in `evals/delta_gold.json` cover all four delta statuses across Apple and Microsoft, including consecutive Apple disclosures. Deterministic tests validate the dataset and retrieval policy without an external model; they do not claim model accuracy.
 
-The checked-in `evals/live_results.json` preserves the earlier real five-query API run over both filings (219 chunks) using `qwen3.7-text-embedding` and `gpt-5.6-luna`:
+The checked-in `evals/live_results.json` preserves an earlier real five-query API run over both filings (219 legacy chunks) using `qwen3.7-text-embedding` and `gpt-5.6-luna`:
 
 | Live check | Observed result |
 | --- | ---: |
@@ -271,7 +273,7 @@ The checked-in `evals/live_results.json` preserves the earlier real five-query A
 | Five-query rerank evaluation | 38.17 s |
 | Three-claim structured analysis | 16.18 s |
 
-The earlier reranker preserved Recall@5 but did not improve gold position; one case moved from rank 4 to rank 5. This checked-in report predates the v0.8 thesis-delta evaluation, so no live status accuracy or grounded-evidence result is claimed yet. These timings are one measured historical run, not a latency benchmark or production SLO.
+The earlier reranker preserved Recall@5 but did not improve gold position; one case moved from rank 4 to rank 5. This report predates v0.9 structure-aware chunking and the current 26-case retrieval evaluation, so it is historical only: no current live model-quality result is claimed. These timings are one measured run, not a latency benchmark or production SLO.
 
 Run the live embedding, rerank, Context compression, and Structured Outputs evaluation with:
 
@@ -328,7 +330,7 @@ That scenario pauses a run at Human Review, closes and recreates the workflow on
 - the scheduler is one in-process `asyncio` loop that checks due state hourly and automatically performs successful SEC collection at most once per 24 hours; it is not a distributed job system or notification service;
 - Qdrant runs embedded and persists vectors under the user data directory; SQLite persists workflow and thesis state;
 - no portfolio management, valuation, Multi-Agent roles, distributed scheduler, or queue;
-- the retrieval gold set contains 26 Apple questions across two filings; the four-case thesis-delta set adds Microsoft, but broader issuer coverage and a current v0.8 live API result are still missing;
+- the retrieval gold set contains 26 Apple questions across two filings; the four-case thesis-delta set adds Microsoft, but broader issuer coverage and a completed current v0.9 live API result are still missing;
 - no measured throughput, p50, p95, or production-readiness claim.
 
 ## License

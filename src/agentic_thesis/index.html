@@ -156,6 +156,9 @@
     supported:'Still supported', weakened:'Weakened',
     possibly_invalidated:'May no longer hold', unknown:'Not enough evidence'
   };
+  const evidenceKindLabels = {
+    sentence:'Sentence', list_item:'List item', table_row:'Table row'
+  };
   const stepLabels = {
     retrieve_claims:'Finding evidence for each reason you believe in the business',
     build_evidence_packs:'Keeping only the most relevant passages',
@@ -223,7 +226,7 @@
     }).join('');
     $('evidence').className = '';
     $('evidence').innerHTML = state.evidence_packs.flatMap(pack => pack.items.map(item =>
-      `<article class="evidence"><div class="row between"><strong>${escapeHtml(pack.claim_id)}</strong><span class="muted">${escapeHtml(item.filing_date)} · ${escapeHtml(item.section)}</span></div><blockquote>${escapeHtml(item.quote)}</blockquote><div class="row between"><code>${escapeHtml(item.evidence_id)}</code>${item.source_url ? `<a href="${escapeHtml(item.source_url)}" target="_blank" rel="noreferrer">Read original filing ↗</a>` : ''}</div></article>`
+      `<article class="evidence"><div class="row between"><strong>${escapeHtml(pack.claim_id)}</strong><span class="muted">${escapeHtml(item.filing_date)} · ${escapeHtml(item.section)} · ${escapeHtml(evidenceKindLabels[item.kind] || item.kind)}</span></div><blockquote>${escapeHtml(item.quote)}</blockquote><div class="row between"><code>${escapeHtml(item.evidence_id)}</code>${item.source_url ? `<a href="${escapeHtml(item.source_url)}" target="_blank" rel="noreferrer">Read original filing ↗</a>` : ''}</div></article>`
     )).join('');
     return state;
   }

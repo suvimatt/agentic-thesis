@@ -18,6 +18,7 @@ from rank_bm25 import BM25Okapi
 import tiktoken
 
 from agentic_thesis.models import (
+    CitationSpan,
     ClaimDelta,
     DeltaStatus,
     DisclosureChunk,
@@ -28,21 +29,207 @@ from agentic_thesis.models import (
 )
 
 
-class _TextExtractor(HTMLParser):
+@dataclass(frozen=True)
+class _FilingBlock:
+    kind: Literal["heading", "paragraph", "list_item", "table_row"]
+    text: str
+
+
+class _FilingHTMLParser(HTMLParser):
+    _BLOCK_TAGS = {"div", "p", "li", "section", "article"}
+    _IGNORED_TAGS = {"head", "script", "style", "noscript", "svg", "ix:header", "ix:hidden"}
+    _VOID_TAGS = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"}
+
     def __init__(self) -> None:
         super().__init__()
-        self.parts: list[str] = []
+        self.blocks: list[_FilingBlock] = []
+        self.buffer: list[str] = []
+        self.block_kind: Literal["heading", "paragraph", "list_item"] = "paragraph"
+        self.ignored_depth = 0
+        self.in_table = 0
+        self.row: list[str] | None = None
+        self.row_headers: list[bool] = []
+        self.cell: list[str] | None = None
+        self.cell_is_header = False
+        self.table_headers: list[str] | None = None
+        self.table_group: str | None = None
+
+    @staticmethod
+    def _hidden(attrs: list[tuple[str, str | None]]) -> bool:
+        values = {name.lower(): (value or "").lower() for name, value in attrs}
+        style = values.get("style", "").replace(" ", "")
+        return (
+            "hidden" in values
+            or values.get("aria-hidden") == "true"
+            or "display:none" in style
+            or "visibility:hidden" in style
+        )
+
+    @staticmethod
+    def _normalize(parts: list[str]) -> str:
+        return re.sub(r"\s+", " ", " ".join(parts)).strip()
+
+    def _flush(self) -> None:
+        text = self._normalize(self.buffer)
+        self.buffer = []
+        if text:
+            kind = self.block_kind
+            if re.match(r"^Item\s+(?:\d+[A-Z]?|[A-Z])\.?\b", text, re.IGNORECASE):
+                kind = "heading"
+            self.blocks.append(_FilingBlock(kind, text))
+        self.block_kind = "paragraph"
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        tag = tag.lower()
+        if self.ignored_depth:
+            if tag not in self._VOID_TAGS:
+                self.ignored_depth += 1
+            return
+        if tag in self._IGNORED_TAGS or self._hidden(attrs):
+            if tag not in self._VOID_TAGS:
+                self.ignored_depth = 1
+            return
+        if tag == "br" and not self.in_table:
+            self.buffer.append(" ")
+        elif tag == "table":
+            self._flush()
+            self.in_table += 1
+            self.table_headers = None
+            self.table_group = None
+        elif self.in_table and tag == "tr":
+            self.row = []
+            self.row_headers = []
+        elif self.in_table and tag in {"td", "th"}:
+            self.cell = []
+            self.cell_is_header = tag == "th"
+        elif not self.in_table and tag in {"h1", "h2", "h3", "h4", "h5", "h6"}:
+            self._flush()
+            self.block_kind = "heading"
+        elif not self.in_table and tag in self._BLOCK_TAGS:
+            self._flush()
+            self.block_kind = "list_item" if tag == "li" else "paragraph"
+
+    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if not self.ignored_depth and tag.lower() == "br":
+            self.buffer.append(" ")
+
+    def handle_endtag(self, tag: str) -> None:
+        tag = tag.lower()
+        if self.ignored_depth:
+            self.ignored_depth -= 1
+            return
+        if self.in_table and tag in {"td", "th"} and self.cell is not None:
+            self.row = self.row or []
+            self.row.append(self._normalize(self.cell))
+            self.row_headers.append(self.cell_is_header)
+            self.cell = None
+            return
+        if self.in_table and tag == "tr" and self.row is not None:
+            cells = [cell for cell in self.row if cell]
+            if cells:
+                if (self.row_headers and all(self.row_headers)) or self._looks_like_table_header(cells):
+                    self.table_headers = cells
+                elif len(cells) == 1 and not re.search(r"\d", cells[0]):
+                    self.table_group = cells[0]
+                else:
+                    text = self._format_table_row(cells)
+                    self.blocks.append(_FilingBlock("table_row", text))
+            self.row = None
+            self.row_headers = []
+            return
+        if tag == "table" and self.in_table:
+            self.in_table -= 1
+            self.table_headers = None
+            self.table_group = None
+            return
+        if not self.in_table and (tag in self._BLOCK_TAGS or tag in {"h1", "h2", "h3", "h4", "h5", "h6"}):
+            self._flush()
+
+    def _format_table_row(self, cells: list[str]) -> str:
+        context = []
+        if self.table_group:
+            context.append(self.table_group)
+        if self.table_headers:
+            context.append("Columns: " + " | ".join(self.table_headers))
+        context.append("Row: " + " | ".join(cells))
+        return "; ".join(context)
+
+    @staticmethod
+    def _looks_like_table_header(cells: list[str]) -> bool:
+        if len(cells) < 2:
+            return False
+        return not any(
+            re.search(r"(?:\$|\d[,.]\d|\d{5,}|\(\s*\d)", cell)
+            or (re.search(r"\d", cell) and not re.fullmatch(r"(?:19|20)\d{2}", cell))
+            for cell in cells
+        )
 
     def handle_data(self, data: str) -> None:
+        if self.ignored_depth:
+            return
         value = html.unescape(data).strip()
+        if not value:
+            return
+        if self.in_table and self.cell is not None:
+            self.cell.append(value)
+        elif not self.in_table:
+            self.buffer.append(value)
+
+    def close(self) -> None:
+        super().close()
+        self._flush()
+
+
+_ITEM_HEADING = re.compile(
+    r"^Item\s+(?:1A|1B|1C|2|3|4|5|6|7A|7|8|9A|9B|9C|10|11|12|13|14|15|16)\.?"
+    r"(?:\s+[^.]{2,100})?",
+    re.IGNORECASE,
+)
+_SENTENCE_BOUNDARY = re.compile(r"[.!?][\"”’')\]]*\s+(?=[A-Z0-9(\"“])")
+_ABBREVIATIONS = {"co.", "corp.", "dr.", "inc.", "mr.", "mrs.", "ms.", "no.", "u.s.", "vs."}
+
+
+def _blocks(document: str) -> list[_FilingBlock]:
+    if not re.search(r"<[A-Za-z!/][^>]*>", document):
+        return [
+            _FilingBlock("paragraph", re.sub(r"\s+", " ", part).strip())
+            for part in re.split(r"\n\s*\n|\n", document)
+            if part.strip()
+        ]
+    parser = _FilingHTMLParser()
+    parser.feed(document)
+    parser.close()
+    return parser.blocks
+
+
+def _sentence_parts(text: str) -> list[tuple[int, int, str]]:
+    starts = [0]
+    for match in _SENTENCE_BOUNDARY.finditer(text):
+        prefix = text[: match.start() + 1].rstrip()
+        last_word = prefix.rsplit(" ", 1)[-1].lower().rstrip("\"”’')]")
+        if last_word in _ABBREVIATIONS or re.fullmatch(r"(?:[a-z]\.){2,}", last_word):
+            continue
+        starts.append(match.end())
+    starts.append(len(text))
+    parts = []
+    for start, end in zip(starts, starts[1:]):
+        value = text[start:end].strip()
         if value:
-            self.parts.append(value)
+            value_start = text.find(value, start, end)
+            parts.append((value_start, value_start + len(value), value))
+    return parts
+
+
+def _complete_sentence_parts(text: str) -> list[tuple[int, int, str]]:
+    return [
+        part
+        for part in _sentence_parts(text)
+        if re.search(r"[.!?][\"”’')\]]*$", part[2])
+    ]
 
 
 def html_to_text(document: str) -> str:
-    parser = _TextExtractor()
-    parser.feed(document)
-    return re.sub(r"\s+", " ", " ".join(parser.parts)).strip()
+    return "\n".join(block.text for block in _blocks(document))
 
 
 def chunk_filing(
@@ -51,36 +238,99 @@ def chunk_filing(
     accession: str,
     filing_date: str,
     source_url: str = "",
-    max_chars: int = 2_000,
+    max_chars: int = 2_400,
 ) -> list[DisclosureChunk]:
-    text = html_to_text(document)
+    spans: list[tuple[str, CitationSpan]] = []
+    document_is_html = bool(re.search(r"<[A-Za-z!/][^>]*>", document))
+    cursor = 0
+    current_section = "Unknown"
+    block_index = 0
+    for block in _blocks(document):
+        heading = _ITEM_HEADING.match(block.text)
+        if block.kind == "heading" or heading:
+            current_section = (heading.group(0) if heading else block.text)[:120]
+            continue
+        if block.kind == "paragraph":
+            sentences = _complete_sentence_parts(block.text)
+            parts = sentences or ([] if document_is_html else _sentence_parts(block.text))
+            values = [(value, "sentence") for _, _, value in parts]
+        else:
+            values = [(block.text, block.kind)]
+        for value, kind in values:
+            if cursor:
+                cursor += 1
+            start = cursor
+            end = start + len(value)
+            digest = hashlib.sha256(
+                f"{accession}:{block_index}:{kind}:{value}".encode()
+            ).hexdigest()[:16]
+            spans.append(
+                (
+                    current_section,
+                    CitationSpan(
+                        span_id=f"{accession}:s:{digest}",
+                        kind=kind,
+                        text=value,
+                        start_char=start,
+                        end_char=end,
+                    ),
+                )
+            )
+            cursor = end
+            block_index += 1
+
     chunks: list[DisclosureChunk] = []
-    sections = list(
-        re.finditer(
-            r"\bItem\s+(?:1A|1B|1C|2|3|4|5|6|7A|7|8|9A|9B|9C|10|11|12|13|14|15|16)\.?(?:\s+[A-Z][A-Za-z &,/-]{2,80})?",
-            text,
-            re.IGNORECASE,
-        )
-    )
-    for start in range(0, len(text), max_chars):
-        end = min(start + max_chars, len(text))
-        body = text[start:end]
-        preceding = [match.group(0) for match in sections if match.start() <= start]
-        section = preceding[-1] if preceding else "Unknown"
-        digest = hashlib.sha256(f"{accession}:{start}:{end}:{body}".encode()).hexdigest()[:16]
+    window: list[CitationSpan] = []
+    window_section = "Unknown"
+
+    def flush() -> None:
+        if not window:
+            return
+        body = "\n".join(span.text for span in window)
+        digest = hashlib.sha256(
+            f"{accession}:{window[0].span_id}:{window[-1].span_id}".encode()
+        ).hexdigest()[:16]
         chunks.append(
             DisclosureChunk(
                 chunk_id=f"{accession}:{digest}",
                 accession=accession,
                 filing_date=filing_date,
-                section=section,
+                section=window_section,
                 text=body,
-                start_char=start,
-                end_char=end,
+                start_char=window[0].start_char,
+                end_char=window[-1].end_char,
                 source_url=source_url,
+                citation_spans=list(window),
             )
         )
+        window.clear()
+
+    for span_section, span in spans:
+        next_size = sum(len(item.text) + 1 for item in window) + len(span.text)
+        if window and (span_section != window_section or next_size > max_chars):
+            flush()
+        if not window:
+            window_section = span_section
+        window.append(span)
+    flush()
     return chunks
+
+
+def canonical_text_from_chunks(chunks: list[DisclosureChunk]) -> str:
+    spans = {
+        span.span_id: span
+        for chunk in chunks
+        for span in chunk.citation_spans
+    }
+    ordered = sorted(spans.values(), key=lambda span: span.start_char)
+    parts: list[str] = []
+    cursor = 0
+    for span in ordered:
+        if span.start_char > cursor:
+            parts.append("\n" * (span.start_char - cursor))
+        parts.append(span.text)
+        cursor = span.end_char
+    return "".join(parts)
 
 
 class _RankedIds(BaseModel):
@@ -115,7 +365,8 @@ class OpenAIModel:
 
     async def rerank(self, query: str, candidates: list[DisclosureChunk]) -> list[str]:
         candidate_text = "\n\n".join(
-            f"[{chunk.chunk_id}] {chunk.text[:1200]}" for chunk in candidates
+            f"[{chunk.chunk_id}] {chunk.section}\n{chunk.text[:1200]}"
+            for chunk in candidates
         )
         response = await self.client.responses.parse(
             model=self.model,
@@ -187,7 +438,7 @@ class HybridRetriever:
         self.embed = embed
         self.rerank = rerank
         self.bm25 = (
-            BM25Okapi([self.tokenize(chunk.text) for chunk in chunks])
+            BM25Okapi([self.tokenize(self.search_text(chunk)) for chunk in chunks])
             if chunks
             else None
         )
@@ -205,6 +456,10 @@ class HybridRetriever:
     @staticmethod
     def tokenize(text: str) -> list[str]:
         return re.findall(r"[a-z0-9]+", text.lower())
+
+    @staticmethod
+    def search_text(chunk: DisclosureChunk) -> str:
+        return f"{chunk.section}\n{chunk.text}"
 
     @staticmethod
     def deterministic_embeddings(texts: list[str], dimensions: int = 64) -> list[list[float]]:
@@ -242,7 +497,7 @@ class HybridRetriever:
         ]
         if not missing:
             return
-        vectors = await self.embed([chunk.text for chunk in missing])
+        vectors = await self.embed([self.search_text(chunk) for chunk in missing])
         if not collection_exists:
             self.qdrant.create_collection(
                 collection_name=self.collection_name,
@@ -296,7 +551,7 @@ class HybridRetriever:
         return [str(point.payload["chunk_id"]) for point in response.points]
 
     @staticmethod
-    def rrf(rankings: list[list[str]], limit: int = 8, k: int = 60) -> list[tuple[str, float]]:
+    def rrf(rankings: list[list[str]], limit: int = 12, k: int = 60) -> list[tuple[str, float]]:
         scores: dict[str, float] = defaultdict(float)
         for ranking in rankings:
             for rank, chunk_id in enumerate(ranking, start=1):
@@ -400,17 +655,60 @@ def mean_reciprocal_rank(results: dict[str, list[str]], gold: dict[str, str]) ->
     return sum(reciprocal_ranks) / len(gold) if gold else 0.0
 
 
-def _trim_extractively(text: str, query: str, max_tokens: int) -> str:
-    encoding = tiktoken.get_encoding("cl100k_base")
-    sentences = [part.strip() for part in re.split(r"(?<=[.!?])\s+", text) if part.strip()]
-    terms = set(HybridRetriever.tokenize(query))
-    best = max(
-        range(len(sentences)),
-        key=lambda index: len(terms & set(HybridRetriever.tokenize(sentences[index]))),
+def anchor_matches(text: str, anchor: str) -> bool:
+    normalized_text = " ".join(HybridRetriever.tokenize(text))
+    normalized_anchor = " ".join(HybridRetriever.tokenize(anchor))
+    return bool(normalized_anchor) and normalized_anchor in normalized_text
+
+
+def anchor_rank(ranking: list[DisclosureChunk], anchor: str) -> int | None:
+    return next(
+        (
+            rank
+            for rank, chunk in enumerate(ranking, start=1)
+            if anchor_matches(HybridRetriever.search_text(chunk), anchor)
+        ),
+        None,
     )
-    excerpt = " ".join(sentences[max(0, best - 1) : best + 2])
-    tokens = encoding.encode(excerpt)[:max_tokens]
-    return encoding.decode(tokens).strip()
+
+
+def anchor_recall_at_k(
+    results: dict[str, list[DisclosureChunk]],
+    gold: dict[str, str],
+    k: int,
+) -> float:
+    hits = sum(
+        anchor_rank(results.get(query, [])[:k], anchor) is not None
+        for query, anchor in gold.items()
+    )
+    return hits / len(gold) if gold else 0.0
+
+
+def anchor_mean_reciprocal_rank(
+    results: dict[str, list[DisclosureChunk]],
+    gold: dict[str, str],
+) -> float:
+    reciprocal_ranks = [
+        1.0 / rank
+        for query, anchor in gold.items()
+        if (rank := anchor_rank(results.get(query, []), anchor)) is not None
+    ]
+    return sum(reciprocal_ranks) / len(gold) if gold else 0.0
+
+
+def _citation_spans(chunk: DisclosureChunk) -> list[CitationSpan]:
+    if chunk.citation_spans:
+        return chunk.citation_spans
+    return [
+        CitationSpan(
+            span_id=f"{chunk.chunk_id}:s:{index}",
+            kind="sentence",
+            text=value,
+            start_char=chunk.start_char + start,
+            end_char=chunk.start_char + end,
+        )
+        for index, (start, end, value) in enumerate(_sentence_parts(chunk.text))
+    ]
 
 
 def build_evidence_pack(
@@ -424,32 +722,46 @@ def build_evidence_pack(
     unique = {hit.chunk.chunk_id: hit for hit in hits}
     ranked = sorted(unique.values(), key=lambda hit: hit.score, reverse=True)
     tokens_before = sum(len(encoding.encode(hit.chunk.text)) for hit in ranked)
-    source_count = len({hit.chunk.filing_date for hit in ranked}) or 1
-    source_heads: list[RetrievalHit] = []
-    seen_sources: set[str] = set()
+    terms = set(HybridRetriever.tokenize(claim))
+    primary: list[tuple[RetrievalHit, CitationSpan, int]] = []
+    extras: list[tuple[RetrievalHit, CitationSpan, int]] = []
+    seen_spans: set[str] = set()
+    per_window_budget = max(1, token_budget // max(1, len(ranked) * 2))
     for hit in ranked:
-        if hit.chunk.filing_date not in seen_sources:
-            source_heads.append(hit)
-            seen_sources.add(hit.chunk.filing_date)
-    ordered = source_heads + [hit for hit in ranked if hit not in source_heads]
+        spans = sorted(
+            _citation_spans(hit.chunk),
+            key=lambda span: (
+                len(terms & set(HybridRetriever.tokenize(span.text))),
+                span.kind == "table_row",
+            ),
+            reverse=True,
+        )
+        window_tokens = 0
+        for span in spans:
+            if span.span_id not in seen_spans:
+                overlap = len(terms & set(HybridRetriever.tokenize(span.text)))
+                span_tokens = len(encoding.encode(span.text))
+                target = (
+                    primary
+                    if window_tokens + span_tokens <= per_window_budget
+                    else extras
+                )
+                target.append((hit, span, overlap))
+                if target is primary:
+                    window_tokens += span_tokens
+                seen_spans.add(span.span_id)
+    extras.sort(key=lambda item: (item[2], item[0].score), reverse=True)
+    candidates = primary + extras
     items: list[EvidenceItem] = []
     used = 0
-    for index, hit in enumerate(ordered):
+    for hit, span, _ in candidates:
         remaining = token_budget - used
         if remaining <= 0:
             break
-        full_tokens = len(encoding.encode(hit.chunk.text))
-        mandatory_source = index < len(source_heads)
-        allowance = min(remaining, max(1, token_budget // source_count)) if mandatory_source else remaining
-        quote = (
-            hit.chunk.text
-            if full_tokens <= allowance
-            else _trim_extractively(hit.chunk.text, claim, allowance)
-        )
-        quote_tokens = len(encoding.encode(quote))
-        if not quote or quote_tokens > remaining:
+        quote_tokens = len(encoding.encode(span.text))
+        if not span.text or quote_tokens > remaining:
             continue
-        evidence_id = f"e:{hit.chunk.chunk_id}"
+        evidence_id = f"e:{span.span_id}"
         items.append(
             EvidenceItem(
                 evidence_id=evidence_id,
@@ -457,10 +769,13 @@ def build_evidence_pack(
                 accession=hit.chunk.accession,
                 filing_date=hit.chunk.filing_date,
                 section=hit.chunk.section,
+                kind=span.kind,
                 source_url=hit.chunk.source_url,
-                start_char=hit.chunk.start_char,
-                end_char=hit.chunk.end_char,
-                quote=quote,
+                start_char=span.start_char,
+                end_char=span.end_char,
+                source_start_char=hit.chunk.start_char,
+                source_end_char=hit.chunk.end_char,
+                quote=span.text,
                 source_text=hit.chunk.text,
                 score=hit.score,
             )
@@ -491,7 +806,15 @@ def enforce_citations(
         cited = [claim_evidence.get(evidence_id) for evidence_id in claim_delta.evidence_ids]
         claim = claims.get(claim_delta.claim_id)
         citations_valid = bool(cited) and all(
-            item is not None and item.quote in item.source_text for item in cited
+            item is not None
+            and 0 <= item.start_char - item.source_start_char
+            <= item.end_char - item.source_start_char
+            <= len(item.source_text)
+            and item.source_text[
+                item.start_char - item.source_start_char:
+                item.end_char - item.source_start_char
+            ] == item.quote
+            for item in cited
         )
         falsifier_valid = (
             claim_delta.status != DeltaStatus.POSSIBLY_INVALIDATED

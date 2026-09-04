@@ -13,9 +13,13 @@
   <a href="https://github.com/suvimatt/agentic-thesis/stargazers"><img src="https://img.shields.io/github/stars/suvimatt/agentic-thesis?style=social" alt="GitHub stars"></a>
 </p>
 
-<h2 align="center">Your investment thesis, evidence-guarded and versioned by AI</h2>
+<h2 align="center">Let every new company report challenge your investment thesis.</h2>
 
-AgenticThesis is an open-source, stateful Python engine for monitoring how new company disclosures support, weaken, or invalidate an existing investment thesis. It keeps source-addressable evidence, reviewable changes, version history, and resumable workflow state application-owned.
+AgenticThesis is an open-source agentic thesis-intelligence system for investors who are willing to state why they own or follow a company—and what would prove them wrong. Whether you learned investing on your own or work in finance matters less than caring about the business behind the stock and revisiting your judgment when the facts change.
+
+It continuously reads official company reports, compares new evidence with your reasons and the conditions that would disprove them, and proposes an evidence-linked update to your thesis. Every proposal shows the exact source text and waits for Human Review before entering the versioned thesis history.
+
+> AgenticThesis does not just tell you what changed at a company. It shows how new evidence changes your thesis—and requires you to approve that change.
 
 > **Status: Alpha.** Public interfaces may change before 1.0.
 
@@ -24,32 +28,30 @@ The same Python distribution provides two entry points:
 - `agentic-thesis serve` runs the self-hosted application with SQLite and embedded Qdrant;
 - `AgenticThesisEngine` is the supported interface for Python applications.
 
-In v0.9, one run still binds exactly one stored disclosure to one thesis version. Financial filings are now parsed into structure-aware retrieval windows while citations remain complete, exact sentences, list items, or table rows. Claim retrieval also searches the facts the investor said would disprove each claim.
-
-For investors, the outcome is simple: remember why you invested and notice when new facts challenge those reasons.
+In v0.9, the engine reads the report's headings, paragraphs, lists, and tables instead of chopping it every N tokens. Retrieval gets enough surrounding text to work well, while every citation shown to a person remains one complete sentence, list item, or table row. It searches both the saved reason and the facts that would prove that reason wrong.
 
 AgenticThesis lets you write down:
 
-- **why you believe the business is worth following or owning**;
+- **what about the company's business makes you willing to keep owning or following it**;
 - **what facts would prove each belief wrong**.
 
-It checks official SEC filings each day. When a new filing appears, it compares the new facts with each reason in your company thesis, shows the exact supporting quotes, and asks you to review the proposed update. If nothing new appears, it does not spend money running an AI analysis.
+It checks the official reports that companies submit to the U.S. regulator. When a new report appears, it compares the new facts with each saved reason, shows the exact original words, and asks you to review the proposed update. If nothing new appears, it does not spend money running an AI analysis.
 
-You remain the decision-maker. AgenticThesis does not tell you to Buy, Sell, or Hold.
+You remain the decision-maker. AgenticThesis does not decide whether you should buy, sell, or keep a stock.
 
-AgenticThesis is for self-directed, long-term investors who already have reasons for following or owning a small number of companies. It monitors the **company-fundamentals thesis** only. Stock valuation and the final investment action remain separate decisions owned by the investor.
+It focuses on the business behind the stock: how it makes money, why customers buy, its products, costs, advantages, and what could go wrong. It does not predict prices or decide whether today's share price is cheap or expensive.
 
 ## A concrete Apple example
 
-The included Apple example produced these results in a recorded live API run:
+An earlier recorded live API run produced these Apple results:
 
-| Your saved company-thesis reason | What the new filing showed | Plain-English result |
+| What you believed | What Apple reported | Result |
 | --- | --- | --- |
-| Services helps Apple maintain durable margins | Services gross margin was 73.9% versus 37.2% for Products, while Services sales grew 13% | **Still supported** |
-| Greater China remains a resilient source of demand | Greater China sales fell 8%, mainly because of lower iPhone and iPad sales | **May no longer hold** |
-| Apple can manage concentrated component supply | Apple still depends on some single or limited sources, but no current material disruption was established | **Weakened** |
+| Apple's services business helps it keep more money from each sale | For every $100 of sales, Services had $73.90 left after the costs tied directly to those sales, before paying Apple's other bills; Products had $37.20 left, and Services sales grew 13% | **Still looks right** |
+| Customers in Greater China will keep buying at a steady level | Sales there fell 8%, mainly because people bought fewer iPhones and iPads | **May be wrong now** |
+| Apple can keep making products even when it relies on very few suppliers for some parts | Apple still gets some parts from only one or a few sources, but the report did not show that this had stopped production | **Needs more caution** |
 
-Each result links back to the original filing passages. Nothing is added to your saved company thesis until you approve it.
+Each result links to the exact words in Apple's report. Nothing changes in your saved record until you approve it.
 
 ## Table of Contents
 
@@ -57,7 +59,7 @@ Each result links back to the original filing passages. Nothing is added to your
 - [🚀 Quick Start](#-quick-start)
 - [Python Engine Interface](#python-engine-interface)
 - [What AgenticThesis does for you](#what-agenticthesis-does-for-you)
-- [Plain-English terms](#plain-english-terms)
+- [Project terms](#project-terms)
 - [How It Works](#how-it-works)
 - [Architecture](#architecture)
 - [Implemented Capabilities](#implemented-capabilities)
@@ -102,7 +104,7 @@ AGENTIC_THESIS_SEC_USER_AGENT="AgenticThesis your-email@example.com"
 uvx agentic-thesis==0.9.0 serve
 ```
 
-Open [http://127.0.0.1:8000](http://127.0.0.1:8000). The first start includes a ready-to-use Apple company thesis and two filings. Your company theses, source documents, vector index, checks, pending reviews, and approved updates remain under `~/.agentic-thesis/` after you close and restart the app.
+Open [http://127.0.0.1:8000](http://127.0.0.1:8000). The first start includes a ready-to-use Apple example and two company reports. Your saved reasons, source documents, vector index, checks, pending reviews, and approved updates remain under `~/.agentic-thesis/` after you close and restart the app.
 
 v0.9 uses a new local schema and intentionally does not migrate earlier data. Keep an existing data directory as a backup and start v0.9 with a fresh directory:
 
@@ -110,7 +112,7 @@ v0.9 uses a new local schema and intentionally does not migrate earlier data. Ke
 uvx agentic-thesis==0.9.0 serve --data-dir ~/.agentic-thesis-v09
 ```
 
-Create another company thesis in the browser by entering the company, each reason you believe in the business, why it matters, and one fact that would prove it wrong. No JSON or schema knowledge is required.
+Add another company in the browser by entering why you own or follow its stock, why that reason matters, and one fact that would prove it wrong. No JSON or schema knowledge is required.
 
 For development and deterministic verification:
 
@@ -165,36 +167,36 @@ The executable contract is [`tests/test_engine_contract.py`](tests/test_engine_c
 
 | What usually goes wrong | What AgenticThesis does |
 | --- | --- |
-| Your original reasons get blurred by daily price moves and headlines | Keeps a dated history of what you believed |
-| A 100-page filing is too long to compare with every company-thesis reason | Finds the passages relevant to each reason |
-| An AI summary sounds confident but may not be grounded | Checks every quoted passage against the source |
-| New evidence gets mixed with your final judgment | Proposes an update and waits for your approval |
+| Daily price moves and headlines make you forget why you bought or kept the stock | Keeps a dated history of your original reasons |
+| A 100-page company report is too long to compare with every saved reason | Finds the parts relevant to each reason |
+| An AI answer sounds certain but may have made something up | Checks every quote against the original report |
+| New facts get mixed up with your own decision | Proposes an update and waits for your approval |
 | The app or computer restarts during research | Continues from saved progress |
 
-The product is built for disciplined review, not trading signals. When evidence is missing or contradictory, it says **Not enough evidence** instead of forcing an answer.
+The product helps you check your own reasoning; it does not issue action signals. When the report does not contain enough information, or different facts point in different directions, it says **Not enough information** instead of guessing.
 
-## Plain-English terms
+## Project terms
 
-The code and engineering sections use precise internal names. In the product:
+The code uses short internal names for these everyday ideas:
 
-| Internal term | What it means to an investor |
+| Internal term | Everyday meaning |
 | --- | --- |
-| Investment thesis | Your saved reasons for following or owning a company |
-| Claim | One specific reason you believe in the business |
+| Thesis | Your saved reasons for owning or following a stock |
+| Claim | One specific reason you think the company can keep doing well |
 | Falsifier | A fact that would prove that reason wrong |
-| Thesis delta | A proposed evidence-based update |
-| Human Review | You read the evidence and decide whether to save the update |
+| Thesis delta | A proposed update based on the new report |
+| Human Review | You read the original words and decide whether to save the update |
 
 ## How It Works
 
 ```text
-Write down why you believe in the business and what would prove you wrong
-→ AgenticThesis checks selected SEC reports once a day
-→ No new filing: record the check and stop
-→ New filing: create a run bound to that disclosure and compare it with every saved reason
-→ Show Still supported / Weakened / May no longer hold / Not enough evidence
+Write down why you own or follow the stock and what would prove each reason wrong
+→ AgenticThesis checks the selected official company reports once a day
+→ No new report: record the check and stop
+→ New report: compare it with every saved reason
+→ Show Still looks right / Needs more caution / May be wrong now / Not enough information
 → Link each result to the exact original quotes
-→ Wait for you to keep your current view or save the update
+→ Wait for you to keep your current record or save the update
 ```
 
 Under the hood, these four results are stored as `supported`, `weakened`, `possibly_invalidated`, and `unknown`. The reviewable update is a typed `ThesisDelta`; the durable run is a `ThesisRun`; and an approved update creates both the next immutable `ThesisSnapshot` and a queryable `ThesisRevision`.
@@ -207,7 +209,6 @@ The system has one application-owned workflow, not a collection of autonomous ag
 
 | Boundary | Responsibility | Implementation |
 | --- | --- | --- |
-| Interface | Manage theses and disclosures, poll selected SEC filing types, start work asynchronously, replay progress, and accept review decisions | FastAPI, background `asyncio` tasks, durable SSE |
 | Retrieval | Find claim-relevant context within the run's bound disclosure | deterministic structure-aware windows made from intact sentences, list items, and contextualized table rows; claim and falsifier queries; BM25, embedded persistent Qdrant vectors, RRF, and conditional API rerank |
 | Working Context | Give each claim the smallest sufficient, source-addressable evidence | query-conditioned `EvidencePack` that packs whole citation spans within a 2,000-token per-claim budget, with span-bound evidence IDs and exact source offsets |
 | Semantic analysis | Compare every thesis claim with supplied evidence only | API Structured Outputs → typed `ThesisDelta` |
@@ -234,7 +235,7 @@ The editable diagram source is [`docs/agentic-thesis-architecture.html`](docs/ag
 - multiple isolated theses plus manual HTML/TXT disclosure import;
 - one official-source SEC EDGAR monitor per thesis, selected filing types, accession/content deduplication, manual sync, and a persisted daily collection schedule;
 - async FastAPI, background runs, bounded/timeout-wrapped model calls, checkpoint recovery after shutdown, and live LangGraph events without chain-of-thought;
-- a dependency-free product page with a guided investment-case editor, disclosure management, progress, citations, Context compression, and Human Review;
+- a dependency-free product page with a guided company-reason editor, disclosure management, progress, citations, Context compression, and Human Review;
 - an installable `agentic-thesis serve` CLI with packaged sample data and a stable user data directory.
 
 ## Verified Results
@@ -329,7 +330,7 @@ That scenario pauses a run at Human Review, closes and recreates the workflow on
 - automatic ingestion is intentionally limited to official SEC EDGAR submissions; no news, social media, or investor-relations crawlers;
 - the scheduler is one in-process `asyncio` loop that checks due state hourly and automatically performs successful SEC collection at most once per 24 hours; it is not a distributed job system or notification service;
 - Qdrant runs embedded and persists vectors under the user data directory; SQLite persists workflow and thesis state;
-- no portfolio management, valuation, Multi-Agent roles, distributed scheduler, or queue;
+- no share-price prediction, advice about how much money to put into a company, Multi-Agent roles, distributed scheduler, or queue;
 - the retrieval gold set contains 26 Apple questions across two filings; the four-case thesis-delta set adds Microsoft, but broader issuer coverage and a completed current v0.9 live API result are still missing;
 - no measured throughput, p50, p95, or production-readiness claim.
 

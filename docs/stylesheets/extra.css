@@ -1,0 +1,46 @@
+[data-md-color-scheme="default"],
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color: #276749;
+  --md-primary-fg-color--light: #3f7d58;
+  --md-primary-fg-color--dark: #1f5139;
+  --md-accent-fg-color: #2e5aa8;
+}
+
+[data-md-color-scheme="default"] {
+  --md-default-bg-color: #f6f8f4;
+  --md-default-fg-color: #172019;
+  --md-default-fg-color--light: #667069;
+  --md-code-bg-color: #e9f3ec;
+}
+
+.md-header {
+  border-bottom: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+  box-shadow: none;
+}
+
+.md-typeset h1,
+.md-typeset h2 {
+  font-family: ui-serif, Georgia, serif;
+  letter-spacing: -0.02em;
+}
+
+.md-typeset .hero {
+  margin: 2rem 0 2.5rem;
+  max-width: 48rem;
+}
+
+.md-typeset .hero h1 {
+  margin-bottom: 0.6rem;
+  font-size: clamp(2.4rem, 6vw, 4.5rem);
+  line-height: 1.02;
+}
+
+.md-typeset .hero p {
+  color: var(--md-default-fg-color--light);
+  font-size: 1.05rem;
+}
+
+.md-typeset img[alt="AgenticThesis architecture"] {
+  border: 1px solid color-mix(in srgb, currentColor 14%, transparent);
+  border-radius: 0.4rem;
+}

@@ -1,7 +1,7 @@
 <h1 align="center">AgenticThesis</h1>
 
 <p align="center">
-  <a href="README.md">English</a> | <a href="README_ZH.md">简体中文</a>
+  <a href="README.md">English</a> | <a href="README_ZH.md">简体中文</a> | <a href="https://thesis.getsuvi.com/">Documentation</a>
 </p>
 
 <p align="center">
@@ -15,120 +15,57 @@
 
 <h2 align="center">Let every new company report challenge your investment thesis.</h2>
 
-AgenticThesis is an open-source AI agent that tests your investment thesis (why you own a stock) against new company filings—with exact citations, human review, and version history.
+AgenticThesis is an open-source AI agent that tests your investment thesis—why you own a stock—against new company disclosures. Every proposed change links to exact source evidence and waits for Human Review before becoming authoritative history.
 
-**Built for investors who care about the business behind the stock—whatever their investing style.**
+> **Status:** `main` contains the v1.1 alpha implementation. The latest published package may trail the repository. Alpha schema upgrades intentionally require a fresh data directory.
 
-You may rely mainly on company research or combine it with price trends, market events, or other methods. AgenticThesis does not ask you to join an investing school. It focuses on one job: checking whether new company evidence supports, weakens, or overturns the reasons you wrote down.
+## Why it exists
 
-You record those reasons and what would prove each one wrong. AgenticThesis continuously reads official company reports, proposes evidence-linked updates, and shows the exact source text. Nothing enters the versioned thesis history until you review and approve it.
+You write down why a business deserves to remain in your portfolio or watchlist—and what observable facts would prove each reason wrong. AgenticThesis monitors selected SEC and issuer IR sources, preserves what they published, finds claim-relevant evidence, and proposes a reviewable update.
 
-> AgenticThesis does not just tell you what changed at a company. It shows how new evidence changes your thesis—and requires you to approve that change.
-
-> **Status: v1.1 alpha development.** The latest PyPI release remains v0.9.0.
-
-The same Python distribution provides two entry points:
-
-- `agentic-thesis serve` runs the self-hosted application with SQLite and embedded Qdrant;
-- `AgenticThesisEngine` is the supported interface for Python applications.
-
-### What does v1.1 alpha.1 actually add?
-
-**v1.1 alpha.1 turns the SEC-only alpha into an authoritative company-information radar with one recoverable processing path.**
-
-- It remembers the last SEC filing it checked and processes only newer filings. If that filing has fallen off the latest list, it searches the older SEC pages to find it;
-- it preserves the SEC file listing, official report, important attachments, and XML data exactly as received, together with their source, content fingerprint, and parsing result;
-- if one attachment fails to download, the successfully collected material remains usable and the missing attachment and error stay visible;
-- SEC amendments are included when their base form is watched and linked to the original event when the reporting period makes that relationship deterministic;
-- explicitly configured issuer IR pages can discover same-site releases, presentations, reports, and official text transcripts, retaining the page version that exposed each link and observing content replacement or link removal;
-- native PDFs retain page-addressable citations; image-only PDFs remain `needs_ocr` unless the engine caller explicitly supplies a bounded OCR function;
-- event artifacts, fetch failures, the versioned claim/falsifier Radar decision, and any run registration commit atomically. Only `needs_review` events start analysis; `digest` events remain visible without an LLM call.
-
-In short, **the engine now discovers official SEC and issuer events, preserves their exact source record, routes them against explicit thesis claims and falsifiers, and can recover the same run after interruption.**
-
-AgenticThesis lets you write down:
-
-- **what about the company's business makes you willing to keep owning or following it**;
-- **what facts would prove each belief wrong**.
-
-It checks the official reports that companies submit to the U.S. regulator. When a new report appears, it compares the new facts with each saved reason, shows the exact original words, and asks you to review the proposed update. If nothing new appears, it does not spend money running an AI analysis.
-
-You remain the decision-maker. AgenticThesis does not decide whether you should buy, sell, or keep a stock.
-
-It focuses on the business behind the stock: how it makes money, why customers buy, its products, costs, advantages, and what could go wrong. It does not predict prices or decide whether today's share price is cheap or expensive.
+It does not predict prices, value securities, size positions, or issue Buy/Sell/Hold instructions. The investor owns the judgment.
 
 ## A concrete Apple example
 
-An earlier recorded live API run produced these Apple results:
+An earlier measured run compared three saved beliefs with a new Apple filing:
 
-| What you believed | What Apple reported | Result |
+| Saved belief | New company evidence | Proposed result |
 | --- | --- | --- |
-| Apple's services business helps it keep more money from each sale | For every $100 of sales, Services had $73.90 left after the costs tied directly to those sales, before paying Apple's other bills; Products had $37.20 left, and Services sales grew 13% | **Still looks right** |
-| Customers in Greater China will keep buying at a steady level | Sales there fell 8%, mainly because people bought fewer iPhones and iPads | **May be wrong now** |
-| Apple can keep making products even when it relies on very few suppliers for some parts | Apple still gets some parts from only one or a few sources, but the report did not show that this had stopped production | **Needs more caution** |
+| Services improve Apple's business economics | Services gross margin remained materially above Products and Services revenue grew | **Supported** |
+| Greater China demand remains steady | Greater China sales declined, driven mainly by lower iPhone and iPad sales | **Possibly invalidated** |
+| Supplier concentration will not stop production | Concentration remained disclosed, without evidence that production had stopped | **Weakened** |
 
-Each result links to the exact words in Apple's report. Nothing changes in your saved record until you approve it.
+Each result retained exact source evidence. None became thesis history until approval. This is an illustrative historical run, not investment advice or a statement about current Apple fundamentals.
 
-## Table of Contents
+## Quick start
 
-- [A concrete Apple example](#a-concrete-apple-example)
-- [🚀 Quick Start](#-quick-start)
-- [Python Engine Interface](#python-engine-interface)
-- [What AgenticThesis does for you](#what-agenticthesis-does-for-you)
-- [Project terms](#project-terms)
-- [How It Works](#how-it-works)
-- [Architecture](#architecture)
-- [Implemented Capabilities](#implemented-capabilities)
-- [Verified Results](#verified-results)
-- [API Usage](#api-usage)
-- [90-Second Verification](#90-second-verification)
-- [Deliberate Limits](#deliberate-limits)
-- [License](#license)
-
-## 🚀 Quick Start
-
-### 1. Configure model endpoints
-
-Create `~/.agentic-thesis/.env` (or use `.env` in the current directory):
+Install the latest published package:
 
 ```bash
-mkdir -p ~/.agentic-thesis
-$EDITOR ~/.agentic-thesis/.env
+python -m pip install agentic-thesis
 ```
 
-Set these values:
-
-| Variable | Purpose |
-| --- | --- |
-| `OPENAI_API_KEY` | API key for reranking and structured thesis analysis |
-| `OPENAI_BASE_URL` | OpenAI-compatible endpoint for the reasoning model |
-| `AGENTIC_THESIS_MODEL` | Reasoning model name |
-| `EMBEDDING_API_KEY` | API key for the embedding endpoint |
-| `EMBEDDING_BASE_URL` | OpenAI-compatible embedding endpoint |
-| `AGENTIC_THESIS_EMBEDDING_MODEL` | Embedding model name |
-| `AGENTIC_THESIS_SEC_USER_AGENT` | Your product/name and contact email; required only for SEC monitoring |
-
-SEC requires automated clients to identify themselves. For example:
+Configure the reasoning and embedding endpoints in `~/.agentic-thesis/.env`:
 
 ```dotenv
+OPENAI_API_KEY=your-key
+AGENTIC_THESIS_MODEL=gpt-5-mini
+
+EMBEDDING_API_KEY=your-key
+EMBEDDING_BASE_URL=https://api.openai.com/v1
+AGENTIC_THESIS_EMBEDDING_MODEL=text-embedding-3-small
+
+# Required only for SEC monitoring
 AGENTIC_THESIS_SEC_USER_AGENT="AgenticThesis your-email@example.com"
 ```
 
-### 2. Start the application
-
-The latest published release can be started with `uvx agentic-thesis==0.9.0 serve`. Use the development setup below to run the current v1.1 alpha code.
-
-Open [http://127.0.0.1:8000](http://127.0.0.1:8000). The first start includes a ready-to-use Apple example and two company reports. Your saved reasons, source documents, vector index, checks, pending reviews, and approved updates remain under `~/.agentic-thesis/` after you close and restart the app.
-
-Current `main` uses a clean v1.1 schema and rejects every earlier data directory without modifying it. Use a fresh directory:
+Start the self-hosted application:
 
 ```bash
-agentic-thesis serve --data-dir ~/.agentic-thesis-v11-alpha
+agentic-thesis serve
 ```
 
-Add another company in the browser by entering why you own or follow its stock, why that reason matters, and one fact that would prove it wrong. No JSON or schema knowledge is required.
-
-For development and deterministic verification:
+Open [http://127.0.0.1:8000](http://127.0.0.1:8000). For development against current `main`:
 
 ```bash
 git clone https://github.com/suvimatt/agentic-thesis.git
@@ -136,237 +73,48 @@ cd agentic-thesis
 python3 -m venv .venv
 .venv/bin/python -m pip install -e '.[test]'
 .venv/bin/pytest -q -p no:cacheprovider
+.venv/bin/agentic-thesis serve --data-dir ~/.agentic-thesis-v11-alpha
 ```
 
-The test suite uses deterministic retrieval and model substitutes where appropriate, so the core state guarantees can be verified without calling an external model.
+See the [5-minute setup](https://thesis.getsuvi.com/getting-started/) for provider URLs, SEC configuration, and the first evidence cycle.
 
-## Python Engine Interface
+## What v1.1 alpha provides
 
-Install the engine from PyPI:
-
-```bash
-python -m pip install "agentic-thesis==0.9.0"
-```
-
-`open_local` supplies the default SQLite checkpoint/state adapter and persistent embedded Qdrant index. Callers provide the model functions and use domain models exported from `agentic_thesis`:
-
-```python
-from agentic_thesis import AgenticThesisEngine, ReviewDecision
-
-engine = await AgenticThesisEngine.open_local(
-    "./data",
-    embed=embed,
-    rerank=rerank,
-    analyze=analyze,
-)
-await engine.create_thesis(thesis)
-await engine.add_disclosure(disclosure)
-paused = await engine.run(
-    "aapl-2024-review",
-    thesis.thesis_id,
-    disclosure.document_id,
-)
-committed = await engine.review(
-    "aapl-2024-review", ReviewDecision(action="approve")
-)
-revisions = await engine.list_revisions(thesis.thesis_id)
-await engine.close()
-```
-
-`run` returns a typed `ThesisRun`, including its bound `disclosure_id`, validated delta, evidence packs, review outcome, and committed version when present. `list_revisions` returns only approved, committed `ThesisRevision` records; rejected runs remain in run history but never become revisions.
-
-The executable contract is [`tests/test_engine_contract.py`](tests/test_engine_contract.py). FastAPI, the browser application, SSE, and the local scheduler are self-host adapters around the same engine; they are not required by engine callers.
-
-## What AgenticThesis does for you
-
-| What usually goes wrong | What AgenticThesis does |
-| --- | --- |
-| Daily price moves and headlines make you forget why you bought or kept the stock | Keeps a dated history of your original reasons |
-| A 100-page company report is too long to compare with every saved reason | Finds the parts relevant to each reason |
-| An AI answer sounds certain but may have made something up | Checks every quote against the original report |
-| New facts get mixed up with your own decision | Proposes an update and waits for your approval |
-| The app or computer restarts during research | Continues from saved progress |
-
-The product helps you check your own reasoning; it does not issue action signals. When the report does not contain enough information, or different facts point in different directions, it says **Not enough information** instead of guessing.
-
-## Project terms
-
-The code uses short internal names for these everyday ideas:
-
-| Internal term | Everyday meaning |
-| --- | --- |
-| Thesis | Your saved reasons for owning or following a stock |
-| Claim | One specific reason you think the company can keep doing well |
-| Falsifier | A fact that would prove that reason wrong |
-| Thesis delta | A proposed update based on the new report |
-| Human Review | You read the original words and decide whether to save the update |
-
-## How It Works
-
-```text
-Write down why you own or follow the stock and what would prove each reason wrong
-→ AgenticThesis checks the selected official company reports once a day
-→ No new report: record the check and stop
-→ New report: compare it with every saved reason
-→ Show Still looks right / Needs more caution / May be wrong now / Not enough information
-→ Link each result to the exact original quotes
-→ Wait for you to keep your current record or save the update
-```
-
-Under the hood, these four results are stored as `supported`, `weakened`, `possibly_invalidated`, and `unknown`. The reviewable update is a typed `ThesisDelta`; the durable run is a `ThesisRun`; and an approved update creates both the next immutable `ThesisSnapshot` and a queryable `ThesisRevision`.
+- **Authoritative collection:** SEC submissions and explicitly trusted issuer IR pages, including selected filing artifacts, PDFs, presentations, and official text transcripts.
+- **Immutable provenance:** original bytes, canonical source URLs, SHA-256 fingerprints, parser outcomes, fetch failures, and exact page/character locators.
+- **Thesis-aware Radar:** versioned deterministic routing against claims and falsifiers before spending a model call.
+- **Bounded evidence:** structure-aware BM25/vector retrieval, conditional reranking, whole-span Context packing, and exact citation validation.
+- **Human-owned history:** structured four-state thesis deltas that remain non-authoritative until approval.
+- **Recoverable execution:** checkpoint/resume, durable event replay, immutable revisions, and compare-and-swap conflict protection.
 
 ## Architecture
 
-[![AgenticThesis system architecture](docs/agentic-thesis-architecture.svg)](docs/agentic-thesis-architecture.html)
+[![AgenticThesis system architecture](docs/agentic-thesis-architecture.svg)](https://thesis.getsuvi.com/architecture/)
 
-The system has one application-owned workflow, not a collection of autonomous agents. LangGraph coordinates six explicit state transitions; deterministic code owns retrieval fusion, Context budgeting, citation integrity, and version commits, while the LLM is limited to conditional semantic reranking and structured thesis comparison.
+One application-owned LangGraph coordinates the workflow. Deterministic code owns parsing, retrieval fusion, citation validation, Radar routing, and version commits; model work is limited to embeddings, conditional reranking, and structured thesis comparison.
 
-| Boundary | Responsibility | Implementation |
-| --- | --- | --- |
-| Evidence ingestion | Preserve new official company files before asking AI to interpret them | atomic source-neutral events, SEC and issuer IR discovery pages, raw report and attachment bytes, SHA-256 fingerprints, parser outcomes, download failures, and records of every check |
-| Retrieval | Find claim-relevant context within the run's bound disclosure | deterministic structure-aware windows made from intact sentences, list items, and contextualized table rows; claim and falsifier queries; BM25, embedded persistent Qdrant vectors, RRF, and conditional API rerank |
-| Working Context | Give each claim the smallest sufficient, source-addressable evidence | query-conditioned `EvidencePack` that packs whole citation spans within a 2,000-token per-claim budget, with span-bound evidence IDs and exact source offsets |
-| Semantic analysis | Compare every thesis claim with supplied evidence only | API Structured Outputs → typed `ThesisDelta` |
-| Integrity gates | Prevent unsupported conclusions or unsafe state changes | exact citation-span/source validation, falsifier validation, exact-claim validation, Human Review |
-| Durable state | Resume active or paused runs and preserve authoritative thesis history | canonical disclosures, LangGraph SQLite checkpoints, durable `ThesisRun` records and events, immutable `ThesisSnapshot`s, queryable `ThesisRevision`s, thesis head |
-| Commit | Apply an approved delta only if its base version is still current | SQLite compare-and-swap → `vN+1` or `version_conflict` |
+The same Python distribution exposes:
 
-The two checked-in SEC filings contain 97,680 `cl100k_base` tokens after structure-aware extraction. Retrieval uses 223 bounded windows for context, but citations resolve to 2,547 intact atomic spans with exact canonical offsets. A model call never receives a full filing: it receives a per-claim, cited `EvidencePack`. This keeps **Context** (temporary working evidence), **Memory** (versioned thesis), and **Workflow State** (resumable execution) separate.
+- `AgenticThesisEngine` for Python applications;
+- `agentic-thesis serve` for the local browser UI and FastAPI service.
 
-The editable diagram source is [`docs/agentic-thesis-architecture.html`](docs/agentic-thesis-architecture.html); the README renders its exported SVG.
+## Documentation
 
-## Implemented Capabilities
+- [Getting Started](https://thesis.getsuvi.com/getting-started/)
+- [Core Workflow](https://thesis.getsuvi.com/core-workflow/)
+- [Python Engine](https://thesis.getsuvi.com/interfaces/python-engine/)
+- [HTTP API and CLI](https://thesis.getsuvi.com/interfaces/http-api-cli/)
+- [Operations](https://thesis.getsuvi.com/operations/)
+- [Architecture](https://thesis.getsuvi.com/architecture/)
+- [Evaluation and Limits](https://thesis.getsuvi.com/evaluation/)
 
-- automatic reading of SEC web filings that removes hidden machine-only tags while preserving sections, complete sentences, lists, and table structure;
-- exact preservation of each SEC file listing, official report, important attachment, and XML/XBRL file, together with its source, file type, content fingerprint, and parsing result;
-- memory of the last checked filing plus traversal of older SEC pages when needed; one failed attachment gets its own error record without discarding material already collected;
-- one versioned, deterministic Radar outcome for every event: authority, parse state, high-impact form family, claim matches, and falsifier matches decide `needs_review` or `digest` before model use;
-- atomic event processing that commits source artifacts, fetch failures, Radar decisions, and run registration together, with replay-safe deterministic IDs;
-- configured issuer-owned IR HTML/feed monitoring with one-hop same-host discovery of reports, releases, presentations, and official transcripts, including replacement and removal events;
-- native PDF extraction with exact page citations plus opt-in OCR constrained to one concurrent call and explicit byte/page limits;
-- bounded retrieval windows made from intact citation spans rather than token-count slicing, with stable IDs and exact canonical offsets;
-- claim-and-falsifier retrieval through BM25 + persistent Qdrant vectors and Reciprocal Rank Fusion; only new windows are embedded, with listwise API reranking only when BM25/vector top-1 differ and top-3 overlap is below 2;
-- extractive Context packing with a hard token budget, whole-span selection, source coverage, and retained evidence IDs;
-- OpenAI Structured Outputs for the four-state `ThesisDelta` contract;
-- exact span-to-source citation validation; unsupported or offset-forged output is downgraded to `unknown`;
-- a six-node LangGraph with Human Review interrupt and SQLite checkpoint/resume;
-- immutable thesis snapshots and compare-and-swap conflict protection;
-- one-disclosure-per-run execution with typed, durable `ThesisRun` outcomes and queryable committed `ThesisRevision` history;
-- persistent run history and sequenced SSE replay with `Last-Event-ID` across browser or service restarts;
-- multiple isolated theses plus manual HTML/TXT disclosure import;
-- one SEC watcher per thesis, selectable report types, duplicate detection, manual “check now,” and a persisted daily check;
-- async FastAPI, background runs, bounded/timeout-wrapped model calls, checkpoint recovery after shutdown, and live LangGraph events without chain-of-thought;
-- a dependency-free product page with a guided company-reason editor, disclosure management, progress, citations, Context compression, and Human Review;
-- an installable `agentic-thesis serve` CLI with packaged sample data and a stable user data directory.
+The runtime FastAPI `/docs` page remains the exact HTTP endpoint/schema reference for the installed version.
 
-## Verified Results
+## Boundary and license
 
-Observed on the checked-in fixtures on 2026-09-04:
+AgenticThesis maintains company-fundamentals theses. Valuation, portfolio actions, and investment decisions remain outside the engine. Secondary sources may create verification leads but cannot independently authorize thesis history.
 
-| Check | Observed result |
-| --- | ---: |
-| Tests | 32 passed |
-| Wheel build | passed |
-| 2023 extracted tokens / retrieval windows | 48,777 / 111 |
-| 2024 extracted tokens / retrieval windows | 48,903 / 112 |
-| Atomic citation spans / exact offset reconstruction | 2,547 / 100% |
-| Categorized gold queries | 26: 15 calibration / 11 held-out |
-| Human-labelled thesis-delta cases | 4 across Apple and Microsoft; all four statuses |
-| BM25 / fake-vector / hybrid Recall@5 | 0.923 / 0.577 / 0.885 |
-| Always-rerank / conditional-rerank Recall@5 | 0.962 / 0.962 |
-| BM25 / vector / hybrid / always / conditional MRR | 0.653 / 0.438 / 0.628 / 0.750 / 0.756 |
-| Conditional rerank calls | 15 / 26 |
-| Held-out conditional Recall@5 / MRR | 1.00 / 0.720 |
-| Forged quote or offset | downgraded to `unknown` |
-| Restart/resume | committed v2 from the same run ID |
-| Stale version | rejected with `version_conflict` / HTTP 409 |
+Licensed under [GNU Affero General Public License v3.0](LICENSE). Bugs and focused proposals belong in [GitHub Issues](https://github.com/suvimatt/agentic-thesis/issues).
 
-The 26 cases in `evals/gold.json` cover lexical, numeric, semantic, risk, and regulatory retrieval questions across both Apple filings. The four cases in `evals/delta_gold.json` cover all four delta statuses across Apple and Microsoft, including consecutive Apple disclosures. Deterministic tests validate the dataset and retrieval policy without an external model; they do not claim model accuracy.
-
-The checked-in `evals/live_results.json` preserves an earlier real five-query API run over both filings (219 legacy chunks) using `qwen3.7-text-embedding` and `gpt-5.6-luna`:
-
-| Live check | Observed result |
-| --- | ---: |
-| BM25 / vector / hybrid / rerank Recall@5 | 1.00 / 0.80 / 1.00 / 1.00 |
-| Gold positions, hybrid → rerank | 2→2, 1→1, 2→2, 4→5, 3→3 |
-| Gold evidence retained after compression | 5 / 5 |
-| Validated claim statuses | supported / possibly_invalidated / weakened |
-| Embedding index | 8.73 s |
-| Five-query rerank evaluation | 38.17 s |
-| Three-claim structured analysis | 16.18 s |
-
-The earlier reranker preserved Recall@5 but did not improve gold position; one case moved from rank 4 to rank 5. This report predates v0.9 structure-aware chunking and the current 26-case retrieval evaluation, so it is historical only: no current live model-quality result is claimed. These timings are one measured run, not a latency benchmark or production SLO.
-
-Run the live embedding, rerank, Context compression, and Structured Outputs evaluation with:
-
-```bash
-.venv/bin/python evals/run_live.py
-```
-
-The measured report is written to `evals/live_results.json`; it never contains the API key.
-
-## API Usage
-
-Start and review a run through the API:
-
-```bash
-curl -X POST http://localhost:8000/runs \
-  -H 'content-type: application/json' \
-  -d '{"run_id":"aapl-2024-review","thesis_id":"aapl-primary","disclosure_id":"aapl-2024"}'
-
-curl -N http://localhost:8000/runs/aapl-2024-review/events
-
-curl -X POST http://localhost:8000/runs/aapl-2024-review/review \
-  -H 'content-type: application/json' \
-  -d '{"action":"approve"}'
-```
-
-Configure and check an SEC monitor:
-
-```bash
-curl -X PUT http://localhost:8000/theses/aapl-primary/monitor \
-  -H 'content-type: application/json' \
-  -d '{"cik":"320193","forms":["10-K","10-Q","8-K"],"enabled":true}'
-
-curl -X POST http://localhost:8000/theses/aapl-primary/sync
-```
-
-Configure and check explicitly trusted issuer IR pages:
-
-```bash
-curl -X PUT http://localhost:8000/theses/aapl-primary/ir-monitor \
-  -H 'content-type: application/json' \
-  -d '{"urls":["https://www.example.com/investors"],"enabled":true}'
-
-curl -X POST http://localhost:8000/theses/aapl-primary/ir-sync
-```
-
-The first successful SEC check imports only the latest matching filing and remembers its accession; later checks search older SEC pages when necessary. IR checks follow only explicitly configured HTTPS pages and one-hop same-host official-document links. `/events`, `/artifacts`, `/collection-attempts`, and `/radar` show what was found, preserved, missed, and routed. A failed check is not recorded as a success. Only a `needs_review` decision registers a `ThesisDelta` run, which stops at Human Review.
-
-The browser can also create/list theses, import/list disclosures, list historical runs, and reopen pending reviews. The generated `/docs` page documents the same HTTP API.
-
-## 90-Second Verification
-
-Use the product page for the normal filing → evidence → review path. Then run the single deterministic scenario that proves the two state guarantees that are awkward to stage manually:
-
-```bash
-.venv/bin/pytest -vv -p no:cacheprovider \
-  tests/test_mvp.py::test_langgraph_resumes_after_restart_and_rejects_stale_commit
-```
-
-That scenario pauses a run at Human Review, closes and recreates the workflow on the same local persistence set, resumes the same run ID into Thesis v2, then advances the authoritative head while another run is paused and verifies that its stale approval returns HTTP 409. Application state and LangGraph checkpoints use separate SQLite files to avoid writer contention. The test uses deterministic fake retrieval and analysis, so it does not call an external model.
-
-## Deliberate limits
-
-- IR discovery is intentionally limited to configured public HTTPS pages and relevant one-hop same-host links; there is no headless browser, generic crawler, anti-bot bypass, or audio transcription;
-- OCR is disabled unless an engine caller supplies it; the package never downloads an OCR model automatically;
-- reliable secondary news is not connected yet; when added, it must remain a verification lead and cannot independently authorize a thesis revision;
-- the scheduler is one in-process `asyncio` loop that checks due SEC and IR state hourly and performs successful collection at most once per 24 hours; it is not a distributed job system or notification service;
-- Qdrant runs embedded and persists vectors under the user data directory; SQLite persists workflow and thesis state;
-- no share-price prediction, advice about how much money to put into a company, Multi-Agent roles, distributed scheduler, or queue;
-- the retrieval gold set contains 26 Apple questions, the thesis-delta set has four cases, and the deterministic Radar set has five routing cases; broader issuer coverage and a completed current v1.1 alpha live API result are still missing;
-- no measured throughput, p50, p95, or production-readiness claim.
-
-## License
-
-AgenticThesis is licensed under the [GNU Affero General Public License v3.0](LICENSE).
+For the complete evidence, operations, and contribution contracts,
+use the [documentation site](https://thesis.getsuvi.com/).

@@ -1,0 +1,71 @@
+site_name: AgenticThesis
+site_url: https://thesis.getsuvi.com/
+site_description: Evidence-guarded, versioned investment theses for long-term investors.
+repo_name: suvimatt/agentic-thesis
+repo_url: https://github.com/suvimatt/agentic-thesis
+edit_uri: edit/main/docs/
+copyright: Copyright &copy; 2026 Matt Su · AGPL-3.0-only
+
+theme:
+  name: material
+  language: en
+  custom_dir: docs/overrides
+  icon:
+    logo: material/chart-timeline-variant-shimmer
+    repo: fontawesome/brands/github
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - content.code.copy
+    - navigation.footer
+    - navigation.indexes
+    - navigation.sections
+    - search.highlight
+    - search.suggest
+    - toc.follow
+
+nav:
+  - Overview: index.md
+  - Getting Started: getting-started.md
+  - Core Workflow: core-workflow.md
+  - Interfaces:
+      - Python Engine: interfaces/python-engine.md
+      - HTTP API and CLI: interfaces/http-api-cli.md
+  - Operations: operations.md
+  - Architecture & Quality:
+      - Architecture: architecture.md
+      - Evaluation & Limits: evaluation.md
+  - Project:
+      - Release Notes: releases.md
+      - Contributing: contributing.md
+      - License & Security: project.md
+
+plugins:
+  - search
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - pymdownx.details
+  - pymdownx.superfences
+  - tables
+
+extra_css:
+  - stylesheets/extra.css
+
+exclude_docs: |
+  overrides/
+  requirements.txt
+  research/
+  v1.0-execution-plan.md
+  v1.1-execution-plan.md

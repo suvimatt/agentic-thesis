@@ -43,6 +43,7 @@ agentic-thesis = "agentic_thesis.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/suvimatt/agentic-thesis"
+Documentation = "https://thesis.getsuvi.com/"
 Repository = "https://github.com/suvimatt/agentic-thesis"
 Issues = "https://github.com/suvimatt/agentic-thesis/issues"
 

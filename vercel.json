@@ -1,0 +1,12 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "installCommand": "python -m pip install -r docs/requirements.txt",
+  "buildCommand": "python -m mkdocs build --strict",
+  "outputDirectory": "site",
+  "cleanUrls": true,
+  "redirects": [
+    { "source": "/docs", "destination": "/", "permanent": true },
+    { "source": "/docs/:path*", "destination": "/:path*", "permanent": true }
+  ]
+}
+

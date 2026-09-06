@@ -3,8 +3,6 @@ title: HTTP API and CLI
 description: Run the self-hosted application and use its key HTTP workflows.
 ---
 
-# HTTP API and CLI
-
 ## CLI
 
 ```bash

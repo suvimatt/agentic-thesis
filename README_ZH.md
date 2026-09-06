@@ -89,7 +89,7 @@ python3 -m venv .venv
 
 ## 架构
 
-[![AgenticThesis 系统架构](docs/agentic-thesis-architecture.svg)](https://thesis.getsuvi.com/architecture/)
+[![AgenticThesis 系统架构](docs/public/agentic-thesis-architecture.svg)](https://thesis.getsuvi.com/architecture/)
 
 一个应用拥有的 LangGraph 负责协调工作流。确定性代码负责解析、检索融合、引用校验、Radar 路由和版本提交；模型只负责 Embedding、条件重排与结构化 Thesis 比较。
 

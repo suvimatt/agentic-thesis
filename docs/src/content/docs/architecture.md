@@ -3,11 +3,9 @@ title: Architecture
 description: See how AgenticThesis separates source custody, retrieval, model work, review, and durable state.
 ---
 
-# Architecture
+[![AgenticThesis architecture](/agentic-thesis-architecture.svg)](/agentic-thesis-architecture.html)
 
-[![AgenticThesis architecture](agentic-thesis-architecture.svg)](agentic-thesis-architecture.html)
-
-The editable diagram is available as a [standalone HTML source](agentic-thesis-architecture.html).
+The editable diagram is available as a [standalone HTML source](/agentic-thesis-architecture.html).
 
 ## Responsibility boundaries
 
@@ -42,4 +40,3 @@ This keeps Context, Memory, and Workflow State distinct:
 ## Source boundary
 
 SEC and issuer-owned artifacts may become authoritative evidence. Secondary sources can propose a lead but cannot independently authorize a revision. The model cannot promote a lower-authority source by describing it as official.
-

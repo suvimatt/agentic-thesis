@@ -3,8 +3,6 @@ title: Evaluation & Limits
 description: Review AgenticThesis's reproducible checks, measured results, and deliberate non-claims.
 ---
 
-# Evaluation & Limits
-
 ## Current deterministic checks
 
 Observed on the checked-in fixtures on 2026-09-05:

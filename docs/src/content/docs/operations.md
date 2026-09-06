@@ -3,8 +3,6 @@ title: Operations
 description: Operate, back up, upgrade, and troubleshoot a self-hosted AgenticThesis instance.
 ---
 
-# Operations
-
 ## Persistent state
 
 `agentic-thesis serve` keeps all local state below the selected `--data-dir`:
@@ -64,4 +62,3 @@ The scheduler checks whether collection is due once per hour by default and reco
 | Database is rejected | Use the package version matching that directory, or start the alpha with a fresh directory |
 | PDF says `needs_ocr` | Supply an explicit bounded OCR function through the engine; no OCR model is downloaded automatically |
 | Approval returns `409` | Reload the latest thesis; another review advanced its authoritative version |
-

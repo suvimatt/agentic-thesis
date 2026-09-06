@@ -89,7 +89,7 @@ See the [5-minute setup](https://thesis.getsuvi.com/getting-started/) for provid
 
 ## Architecture
 
-[![AgenticThesis system architecture](docs/agentic-thesis-architecture.svg)](https://thesis.getsuvi.com/architecture/)
+[![AgenticThesis system architecture](docs/public/agentic-thesis-architecture.svg)](https://thesis.getsuvi.com/architecture/)
 
 One application-owned LangGraph coordinates the workflow. Deterministic code owns parsing, retrieval fusion, citation validation, Radar routing, and version commits; model work is limited to embeddings, conditional reranking, and structured thesis comparison.
 

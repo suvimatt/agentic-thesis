@@ -3,8 +3,6 @@ title: Contributing
 description: Develop and verify AgenticThesis without weakening its evidence and review guarantees.
 ---
 
-# Contributing
-
 ## Development setup
 
 ```bash
@@ -31,24 +29,24 @@ All code, comments, and commit messages must be in English. Keep secrets, user r
 Install the documentation tools once:
 
 ```bash
-.venv/bin/python -m pip install -r docs/requirements.txt
+npm --prefix docs install
 ```
 
 Then run both contracts:
 
 ```bash
 .venv/bin/pytest -q -p no:cacheprovider
-.venv/bin/python -m mkdocs build --strict
+npm --prefix docs run build
 git diff --check
 ```
 
 Preview locally:
 
 ```bash
-.venv/bin/python -m mkdocs serve
+npm --prefix docs run dev
 ```
 
-Open [http://127.0.0.1:8000](http://127.0.0.1:8000) for the product only when MkDocs is not using that port; MkDocs defaults to [http://127.0.0.1:8000](http://127.0.0.1:8000) as well.
+Starlight prints the local preview URL when it starts. The FastAPI product continues to use [http://127.0.0.1:8000](http://127.0.0.1:8000).
 
 ## Documentation rules
 

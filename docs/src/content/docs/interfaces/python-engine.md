@@ -3,8 +3,6 @@ title: Python Engine
 description: Use AgenticThesisEngine as the supported application interface.
 ---
 
-# Python Engine
-
 `AgenticThesisEngine` is the supported interface for embedding AgenticThesis in another Python application. Callers provide three bounded model functions; the engine owns local state, retrieval, workflow execution, review, and revision history.
 
 ## Open a local engine
@@ -89,4 +87,3 @@ The public Pydantic models are exported from `agentic_thesis`. The executable co
 - Missing thesis/disclosure/run inputs raise `ValueError`.
 - Approval against a stale thesis head raises `EngineConflictError` and preserves both histories.
 - Unsupported or invalid evidence is retained as a failure/unknown state rather than silently disappearing.
-

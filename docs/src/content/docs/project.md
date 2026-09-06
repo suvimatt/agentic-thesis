@@ -3,8 +3,6 @@ title: License & Security
 description: Understand AgenticThesis licensing, security reporting, and investment-use boundaries.
 ---
 
-# License & Security
-
 ## License
 
 AgenticThesis is licensed under the [GNU Affero General Public License v3.0](https://github.com/suvimatt/agentic-thesis/blob/main/LICENSE) (`AGPL-3.0-only`). Review the license before distributing a modified version or offering it over a network.
@@ -29,4 +27,3 @@ AgenticThesis processes untrusted filings, issuer pages, uploaded documents, and
 ## Investment boundary
 
 The project maintains company-fundamentals theses. It does not provide personalized investment advice, determine fair value, size positions, or decide whether to buy, sell, or hold a security. Source evidence may be incomplete or wrong, model output may be wrong, and Human Review remains mandatory.
-

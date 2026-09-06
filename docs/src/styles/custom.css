@@ -1,0 +1,40 @@
+:root {
+  --sl-color-accent-low: #183727;
+  --sl-color-accent: #68ad7c;
+  --sl-color-accent-high: #b7dfc3;
+  --sl-color-bg: #151a17;
+  --sl-color-bg-nav: #172019;
+  --sl-color-bg-sidebar: #172019;
+}
+
+:root[data-theme='light'] {
+  --sl-color-accent-low: #e9f3ec;
+  --sl-color-accent: #276749;
+  --sl-color-accent-high: #1f5139;
+  --sl-color-white: #172019;
+  --sl-color-gray-1: #172019;
+  --sl-color-gray-2: #37413a;
+  --sl-color-gray-3: #667069;
+  --sl-color-gray-6: #e4e9e3;
+  --sl-color-gray-7: #f0f3ef;
+  --sl-color-black: #f6f8f4;
+  --sl-color-bg: #f6f8f4;
+  --sl-color-bg-nav: #f0f3ef;
+  --sl-color-bg-sidebar: #f6f8f4;
+  --sl-color-bg-inline-code: #e9f3ec;
+}
+
+h1,
+h2 {
+  font-family: ui-serif, Georgia, serif;
+  letter-spacing: -0.02em;
+}
+
+.hero h1 {
+  font-size: clamp(2.5rem, 5vw, 3.25rem);
+}
+
+img[alt='AgenticThesis architecture'] {
+  border: 1px solid color-mix(in srgb, currentColor 14%, transparent);
+  border-radius: 0.4rem;
+}

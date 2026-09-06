@@ -3,8 +3,6 @@ title: Release Notes
 description: Track the currently implemented AgenticThesis release behavior.
 ---
 
-# Release Notes
-
 ## v1.1 alpha.1 — repository implementation
 
 v1.1 alpha turns the earlier SEC-only flow into an authoritative company-information Radar with one recoverable processing path.
@@ -30,4 +28,3 @@ The code declares version `1.1.0a1`. Check [PyPI](https://pypi.org/project/agent
 | v0.7 | Public Python engine, self-hosted app, checkpoint/resume, SSE replay, and CAS commits |
 
 Git history and tags are the authoritative detailed changelog. The internal v1.0 and v1.1 execution records remain in the repository but are intentionally excluded from the public documentation build.
-

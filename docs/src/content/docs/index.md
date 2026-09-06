@@ -1,22 +1,26 @@
 ---
 title: Evidence-guarded investment theses
 description: An open-source engine that keeps investment theses evidence-guarded, human-reviewed, and versioned.
+tableOfContents: false
+hero:
+  title: Let new evidence challenge your investment thesis.
+  tagline: An open-source AI agent that tests explicit investment theses against new company disclosures. Every proposed change links back to exact source evidence and waits for Human Review before becoming authoritative history.
+  actions:
+    - text: Get started in 5 minutes
+      link: /getting-started/
+      icon: right-arrow
+    - text: Understand the workflow
+      link: /core-workflow/
+      variant: secondary
+    - text: View on GitHub
+      link: https://github.com/suvimatt/agentic-thesis
+      icon: external
+      variant: minimal
 ---
 
-<div class="hero" markdown>
-
-# Let every new company report challenge your investment thesis.
-
-AgenticThesis is an open-source AI agent that tests explicit investment theses against new company disclosures. Every proposed change links back to exact source evidence and waits for Human Review before becoming authoritative history.
-
-[Get started in 5 minutes](getting-started.md){ .md-button .md-button--primary }
-[Understand the workflow](core-workflow.md){ .md-button }
-[View on GitHub](https://github.com/suvimatt/agentic-thesis){ .md-button }
-
-</div>
-
-!!! warning "Alpha software"
-    The repository currently contains the v1.1 alpha implementation. Expect clean-schema upgrades and use a fresh data directory when the documented schema version changes.
+:::caution[Alpha software]
+The repository currently contains the v1.1 alpha implementation. Expect clean-schema upgrades and use a fresh data directory when the documented schema version changes.
+:::
 
 ## Who it is for
 
@@ -48,6 +52,6 @@ Each result retained exact source evidence. None became thesis history until app
 
 ## System shape
 
-[![AgenticThesis architecture](agentic-thesis-architecture.svg)](architecture.md)
+[![AgenticThesis architecture](/agentic-thesis-architecture.svg)](/architecture/)
 
 One application-owned LangGraph coordinates the state transitions. Deterministic code owns parsing, retrieval fusion, citation validation, Radar routing, and version commits; model work is limited to embeddings, conditional reranking, and structured thesis comparison.

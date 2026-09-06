@@ -30,7 +30,7 @@ AgenticThesis is an open-source, stateful Python engine that helps self-directed
 1. Inspect the working tree and the affected code, tests, configuration, and public interfaces before editing. Preserve unrelated user changes.
 2. Prefer the smallest complete change; reuse existing seams and avoid speculative providers, plugins, services, or placeholder directories.
 3. Add or update focused tests for changed behavior. Public engine changes require contract coverage; workflow-state changes require recovery, citation, review, and conflict-path coverage as applicable.
-4. Keep `README.md` and `README_ZH.md` aligned for public behavior. When architecture boundaries change, update `docs/agentic-thesis-architecture.html` and its rendered SVG.
+4. Keep `README.md` and `README_ZH.md` aligned for public behavior. When architecture boundaries change, update `docs/public/agentic-thesis-architecture.html` and its rendered SVG.
 5. Run the narrowest relevant validation and report its actual result. Never claim unmeasured accuracy, latency, throughput, or production readiness.
 
 All code, comments, and git commit messages must be in English. Do not commit secrets, private investor data, generated caches, or unrelated artifacts.

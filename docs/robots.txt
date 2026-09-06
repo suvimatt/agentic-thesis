@@ -1,5 +1,0 @@
-User-agent: *
-Allow: /
-
-Sitemap: https://thesis.getsuvi.com/sitemap.xml
-

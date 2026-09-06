@@ -3,8 +3,6 @@ title: Getting Started
 description: Install AgenticThesis, configure model endpoints, and run the self-hosted application.
 ---
 
-# Getting Started
-
 ## Choose a source
 
 Install the latest published package for normal use:
@@ -77,4 +75,3 @@ Open [http://127.0.0.1:8000](http://127.0.0.1:8000). The default data directory 
 ```
 
 The deterministic suite replaces external retrieval and model calls where appropriate. It verifies the engine's state and evidence contracts; it does not measure live model accuracy.
-

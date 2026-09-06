@@ -3,8 +3,6 @@ title: Core Workflow
 description: Understand theses, falsifiers, source events, Radar decisions, evidence, and Human Review.
 ---
 
-# Core Workflow
-
 ## The four core concepts
 
 | Term | Meaning |
@@ -71,4 +69,3 @@ The workflow pauses at Human Review. Approval creates the next immutable `Thesis
 ## Source authority
 
 Regulator and issuer sources may support a thesis delta when exact evidence is available. User-supplied documents retain their explicit origin. Secondary news belongs in Radar as a verification lead and cannot independently become authoritative thesis history.
-

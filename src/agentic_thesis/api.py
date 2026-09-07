@@ -47,7 +47,7 @@ from agentic_thesis.models import (
     ThesisRun,
     ThesisSnapshot,
 )
-from agentic_thesis.rag import OpenAIModel
+from agentic_thesis.rag import OpenAIModel, canonical_text_from_chunks, chunk_filing
 from agentic_thesis.workflow import AgenticThesisWorkflow
 
 
@@ -95,6 +95,20 @@ class _PublicHttpsRedirectHandler(urllib.request.HTTPRedirectHandler):
 def _ir_external_id(resource_url: str, version: str) -> str:
     url_id = hashlib.sha256(resource_url.encode()).hexdigest()[:24]
     return f"{url_id}:{version}"
+
+
+def _ir_content_hash(content: bytes, media_type: str) -> str:
+    if media_type.startswith("text/") or media_type.endswith("xml"):
+        canonical = canonical_text_from_chunks(
+            chunk_filing(
+                content.decode("utf-8", errors="replace"),
+                source_id="ir-fingerprint",
+                source_date="1970-01-01",
+            )
+        )
+        if canonical:
+            content = canonical.encode()
+    return hashlib.sha256(content).hexdigest()
 
 
 class StartRun(BaseModel):
@@ -468,6 +482,12 @@ async def _default_engine() -> AgenticThesisEngine:
         ),
         model=os.getenv("AGENTIC_THESIS_MODEL", "gpt-5-mini"),
         embedding_model=os.environ["AGENTIC_THESIS_EMBEDDING_MODEL"],
+        embedding_batch_size=int(
+            os.getenv("AGENTIC_THESIS_EMBEDDING_BATCH_SIZE", "1")
+        ),
+        embedding_max_tokens=int(
+            os.getenv("AGENTIC_THESIS_EMBEDDING_MAX_TOKENS", "256")
+        ),
     )
     collection_name = "chunks_" + hashlib.sha256(
         (
@@ -977,7 +997,7 @@ def create_app(
                             )
                             continue
 
-                        digest = hashlib.sha256(content).hexdigest()
+                        digest = _ir_content_hash(content, media_type)
                         observed_resources.append((resource_url, digest, media_type))
                         old = previous.get(resource_url)
                         if old and old["present"] and old["content_hash"] == digest:

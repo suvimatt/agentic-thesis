@@ -499,7 +499,7 @@ async def test_official_ir_monitor_detects_new_replaced_and_removed_documents(tm
 
         def __init__(self) -> None:
             self.page = b'<a href="/earnings-q2.html">Q2 earnings results</a>'
-            self.document = b"<html><body>Cloud demand remains durable.</body></html>"
+            self.document = b"<html><body>Cloud demand remains durable.<script>nonce=1</script></body></html>"
 
         async def read(self, url: str) -> tuple[bytes, str]:
             if url.endswith("earnings-q2.html"):
@@ -562,6 +562,7 @@ async def test_official_ir_monitor_detects_new_replaced_and_removed_documents(tm
         assert download.headers["x-content-type-options"] == "nosniff"
         assert download.headers["content-disposition"].startswith("attachment;")
 
+        fake.document = fake.document.replace(b"nonce=1", b"nonce=2")
         unchanged = await client.post("/theses/official-ir/ir-sync")
         assert unchanged.json()["imported"] == 0
         fake.document = b"<html><body>Cloud demand remains durable. Revenue expanded.</body></html>"

@@ -353,18 +353,33 @@ class OpenAIModel:
         embedding_client: AsyncOpenAI | None = None,
         model: str = "gpt-5-mini",
         embedding_model: str = "text-embedding-3-small",
+        embedding_batch_size: int = 1,
+        embedding_max_tokens: int = 256,
     ) -> None:
+        if embedding_batch_size < 1 or embedding_max_tokens < 1:
+            raise ValueError("embedding batch size and token limit must be positive")
         self.client = client
         self.embedding_client = embedding_client or client
         self.model = model
         self.embedding_model = embedding_model
+        self.embedding_batch_size = embedding_batch_size
+        self.embedding_max_tokens = embedding_max_tokens
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
+        encoding = tiktoken.get_encoding("cl100k_base")
+        inputs = []
+        for value in texts:
+            tokens = encoding.encode(value)
+            inputs.append(
+                encoding.decode(tokens[: self.embedding_max_tokens])
+                if len(tokens) > self.embedding_max_tokens
+                else value
+            )
         embeddings: list[list[float]] = []
-        for start in range(0, len(texts), 20):
+        for start in range(0, len(inputs), self.embedding_batch_size):
             response = await self.embedding_client.embeddings.create(
                 model=self.embedding_model,
-                input=texts[start : start + 20],
+                input=inputs[start : start + self.embedding_batch_size],
             )
             embeddings.extend(item.embedding for item in response.data)
         return embeddings

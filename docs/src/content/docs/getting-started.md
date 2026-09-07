@@ -36,12 +36,14 @@ AGENTIC_THESIS_MODEL=gpt-5-mini
 EMBEDDING_API_KEY=your-key
 EMBEDDING_BASE_URL=https://api.openai.com/v1
 AGENTIC_THESIS_EMBEDDING_MODEL=text-embedding-3-small
+AGENTIC_THESIS_EMBEDDING_BATCH_SIZE=1
+AGENTIC_THESIS_EMBEDDING_MAX_TOKENS=256
 
 # Required only for SEC monitoring
 AGENTIC_THESIS_SEC_USER_AGENT="AgenticThesis your-email@example.com"
 ```
 
-`OPENAI_BASE_URL` is optional when using the default OpenAI API. The other model and embedding credentials are required by the packaged CLI. SEC automated clients must identify themselves; use a real product/name and contact email.
+`OPENAI_BASE_URL` is optional when using the default OpenAI API. The other model and embedding credentials are required by the packaged CLI. The conservative embedding batch and token defaults work with providers that expose smaller OpenAI-compatible limits; raise them only after verifying your provider. SEC automated clients must identify themselves; use a real product/name and contact email.
 
 ## Start the application
 

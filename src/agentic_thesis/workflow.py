@@ -7,6 +7,7 @@ from time import perf_counter
 from typing import Any
 
 import aiosqlite
+from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.graph import END, StateGraph
 from langgraph.types import Command, interrupt
@@ -14,9 +15,11 @@ from langgraph.types import Command, interrupt
 from agentic_thesis.models import (
     ArtifactFetchFailure,
     CollectionAttempt,
+    DeltaStatus,
     DisclosureChunk,
     DisclosureDocument,
     DisclosureEvent,
+    EvidencePack,
     RadarEntry,
     RadarOutcome,
     ResearchState,
@@ -27,6 +30,9 @@ from agentic_thesis.models import (
     ThesisSnapshot,
 )
 from agentic_thesis.rag import HybridRetriever, RetrievalHit, build_evidence_pack, enforce_citations
+
+MODEL_TIMEOUT_SECONDS = 45
+ANALYZE_TIMEOUT_SECONDS = 60
 
 
 class AgenticThesisWorkflow:
@@ -90,7 +96,19 @@ class AgenticThesisWorkflow:
             await connection.commit()
         await connection.execute("PRAGMA foreign_keys = ON")
         checkpoint_connection = await aiosqlite.connect(f"{database}.checkpoints")
-        checkpointer = AsyncSqliteSaver(checkpoint_connection)
+        checkpointer = AsyncSqliteSaver(
+            checkpoint_connection,
+            serde=JsonPlusSerializer(
+                allowed_msgpack_modules=(
+                    ThesisSnapshot,
+                    DisclosureChunk,
+                    EvidencePack,
+                    ThesisDelta,
+                    ReviewDecision,
+                    DeltaStatus,
+                )
+            ),
+        )
         await checkpointer.setup()
         await connection.executescript(
             """
@@ -264,7 +282,16 @@ class AgenticThesisWorkflow:
                 collection_name=retriever.collection_name,
                 qdrant=retriever.qdrant,
             )
-            await retriever.index()
+            deadline = asyncio.timeout(MODEL_TIMEOUT_SECONDS)
+            try:
+                async with deadline:
+                    await retriever.index()
+            except TimeoutError as exc:
+                if not deadline.expired():
+                    raise
+                raise TimeoutError(
+                    f"retrieval indexing timed out after {MODEL_TIMEOUT_SECONDS} seconds"
+                ) from exc
         results = await asyncio.gather(
             *[
                 self._retrieve_claim(
@@ -296,8 +323,16 @@ class AgenticThesisWorkflow:
         retriever: Any,
         query: str,
     ) -> tuple[list[RetrievalHit], dict[str, float | bool]]:
-        async with self.model_calls, asyncio.timeout(45):
-            return await retriever.search_with_timings(query, limit=6)
+        deadline = asyncio.timeout(MODEL_TIMEOUT_SECONDS)
+        try:
+            async with self.model_calls, deadline:
+                return await retriever.search_with_timings(query, limit=6)
+        except TimeoutError as exc:
+            if not deadline.expired():
+                raise
+            raise TimeoutError(
+                f"retrieval query timed out after {MODEL_TIMEOUT_SECONDS} seconds"
+            ) from exc
 
     async def _retrieve_claim(
         self,
@@ -364,8 +399,16 @@ class AgenticThesisWorkflow:
 
     async def _analyze_deltas(self, state: ResearchState) -> dict[str, Any]:
         started = perf_counter()
-        async with self.model_calls, asyncio.timeout(60):
-            delta = await self.analyze(state.thesis, state.evidence_packs)
+        deadline = asyncio.timeout(ANALYZE_TIMEOUT_SECONDS)
+        try:
+            async with self.model_calls, deadline:
+                delta = await self.analyze(state.thesis, state.evidence_packs)
+        except TimeoutError as exc:
+            if not deadline.expired():
+                raise
+            raise TimeoutError(
+                f"thesis analysis timed out after {ANALYZE_TIMEOUT_SECONDS} seconds"
+            ) from exc
         return {
             "delta": delta,
             "timings_ms": self._timings(state, "analyze_deltas", started),

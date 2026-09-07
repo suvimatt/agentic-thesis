@@ -15,6 +15,8 @@ v1.1 turns the earlier SEC-only flow into an authoritative company-information R
 - Atomically commits source artifacts, failures, Radar, and optional run registration with replay-safe IDs.
 - Retains exact page/character citations through Human Review and compare-and-swap thesis commits.
 - Adds the browser Radar Inbox and SEC/IR configuration surfaces.
+- Bounds OpenAI-compatible embedding requests, reports model timeouts explicitly, and registers checkpoint types for strict recovery.
+- Fingerprints normalized IR text so dynamic page scripts do not create duplicate disclosures.
 
 The code declares version `1.1.0`. Check [PyPI](https://pypi.org/project/agentic-thesis/) for the latest published package.
 

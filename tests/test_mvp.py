@@ -416,6 +416,87 @@ async def test_persistent_vector_index_reuses_embeddings_and_scopes_search(
     scoped.close()
 
 
+async def test_workflow_times_out_initial_vector_index(tmp_path: Path, monkeypatch) -> None:
+    async def embed(texts: list[str]) -> list[list[float]]:
+        await asyncio.Event().wait()
+        return []
+
+    async def rerank(query: str, candidates: list[DisclosureChunk]) -> list[str]:
+        raise AssertionError("rerank should not run")
+
+    async def analyze(snapshot: ThesisSnapshot, packs: list) -> ThesisDelta:
+        raise AssertionError("analysis should not run")
+
+    monkeypatch.setattr("agentic_thesis.workflow.MODEL_TIMEOUT_SECONDS", 0.01)
+    workflow = await AgenticThesisWorkflow.create(
+        tmp_path / "index-timeout.sqlite",
+        HybridRetriever([], embed=embed, rerank=rerank),
+        analyze,
+    )
+    thesis = ThesisSnapshot(
+        thesis_id="index-timeout",
+        company="Example Inc.",
+        version=1,
+        claims=[
+            ThesisClaim(
+                claim_id="claim",
+                statement="Margins remain durable.",
+                rationale="Scale supports margins.",
+            )
+        ],
+    )
+    chunks = chunk_filing(
+        "<p>Margins remained durable.</p>",
+        source_id="new",
+        source_date="2026-09-07",
+    )
+
+    try:
+        await workflow._retrieve_claims(
+            workflow._initialize("run", "new", thesis, chunks)
+        )
+    except TimeoutError as exc:
+        assert str(exc) == "retrieval indexing timed out after 0.01 seconds"
+    else:
+        raise AssertionError("initial vector indexing should time out")
+    finally:
+        await workflow.close()
+
+
+async def test_workflow_reports_model_timeouts(tmp_path: Path, monkeypatch) -> None:
+    class BlockingRetriever:
+        async def search_with_timings(self, query: str, *, limit: int):
+            await asyncio.Event().wait()
+
+    async def analyze(snapshot: ThesisSnapshot, packs: list) -> ThesisDelta:
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr("agentic_thesis.workflow.MODEL_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr("agentic_thesis.workflow.ANALYZE_TIMEOUT_SECONDS", 0.01)
+    workflow = await AgenticThesisWorkflow.create(
+        tmp_path / "model-timeout.sqlite", BlockingRetriever(), analyze
+    )
+    thesis = ThesisSnapshot(
+        thesis_id="model-timeout",
+        company="Example Inc.",
+        version=1,
+        claims=[],
+    )
+    state = workflow._initialize("run", "new", thesis, [])
+
+    for operation, message in (
+        (workflow._search(BlockingRetriever(), "query"), "retrieval query"),
+        (workflow._analyze_deltas(state), "thesis analysis"),
+    ):
+        try:
+            await operation
+        except TimeoutError as exc:
+            assert str(exc) == f"{message} timed out after 0.01 seconds"
+        else:
+            raise AssertionError(f"{message} should time out")
+    await workflow.close()
+
+
 def test_evidence_pack_respects_budget_and_rejects_forged_quote() -> None:
     chunks = [
         DisclosureChunk(
@@ -538,6 +619,7 @@ async def test_structured_analysis_receives_compressed_quotes_not_source_chunks(
         client,
         embedding_client=embedding_client,
         embedding_model="separate-embedding-model",
+        embedding_batch_size=20,
     )
     assert len(await model.embed(["query"] * 21)) == 21
     assert embedding_client.embeddings.calls == [20, 1]
@@ -568,6 +650,32 @@ async def test_embedding_requests_use_the_separate_embedding_client() -> None:
     )
 
     assert await model.embed(["Apple services"]) == [[0.25, 0.75]]
+
+
+async def test_embedding_requests_are_bounded_for_provider_compatibility() -> None:
+    calls: list[dict] = []
+
+    class Embeddings:
+        async def create(self, **kwargs):
+            calls.append(kwargs)
+            return SimpleNamespace(
+                data=[SimpleNamespace(embedding=[float(len(calls))])]
+            )
+
+    inputs = ["one two three four", "five six seven eight"]
+    model = OpenAIModel(
+        SimpleNamespace(embeddings=Embeddings()),
+        embedding_model="bounded-embedding",
+        embedding_batch_size=1,
+        embedding_max_tokens=2,
+    )
+
+    assert await model.embed(inputs) == [[1.0], [2.0]]
+    assert [len(call["input"]) for call in calls] == [1, 1]
+    assert all(
+        len(call["input"][0]) < len(original)
+        for call, original in zip(calls, inputs, strict=True)
+    )
 
 
 async def test_app_shutdown_waits_for_inflight_run_cancellation(tmp_path: Path) -> None:
@@ -669,7 +777,9 @@ async def test_app_shutdown_waits_for_inflight_run_cancellation(tmp_path: Path) 
     await restarted.close()
 
 
-async def test_langgraph_resumes_after_restart_and_rejects_stale_commit(tmp_path: Path) -> None:
+async def test_langgraph_resumes_after_restart_and_rejects_stale_commit(
+    tmp_path: Path, caplog
+) -> None:
     thesis = ThesisSnapshot(
         thesis_id="aapl-primary",
         company="Apple Inc.",
@@ -912,6 +1022,7 @@ async def test_langgraph_resumes_after_restart_and_rejects_stale_commit(tmp_path
         error_state = (await client.get("/runs/api-error")).json()
         assert error_state["status"] == "failed"
         assert error_state["error"] == "model timed out"
+    assert "agentic_thesis.models" not in caplog.text
     await restarted_again.close()
 
 

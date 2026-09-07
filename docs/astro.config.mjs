@@ -1,6 +1,7 @@
 // @ts-check
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
+import starlightOpenAPI, { openAPISidebarGroups } from 'starlight-openapi';
 
 export default defineConfig({
   site: 'https://thesis.getsuvi.com/',
@@ -19,6 +20,18 @@ export default defineConfig({
           href: 'https://github.com/suvimatt/agentic-thesis',
         },
       ],
+      plugins: [
+        starlightOpenAPI([
+          {
+            base: 'api',
+            schema: './openapi.json',
+            sidebar: {
+              label: 'API Reference',
+              operations: { badges: true },
+            },
+          },
+        ]),
+      ],
       sidebar: [
         { label: 'Overview', slug: 'index' },
         { label: 'Getting Started', slug: 'getting-started' },
@@ -30,6 +43,7 @@ export default defineConfig({
             { label: 'HTTP API and CLI', slug: 'interfaces/http-api-cli' },
           ],
         },
+        ...openAPISidebarGroups,
         { label: 'Operations', slug: 'operations' },
         {
           label: 'Architecture & Quality',

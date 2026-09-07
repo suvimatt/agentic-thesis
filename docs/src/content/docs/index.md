@@ -18,8 +18,8 @@ hero:
       variant: minimal
 ---
 
-:::caution[Alpha software]
-The repository currently contains the v1.1 alpha implementation. Expect clean-schema upgrades and use a fresh data directory when the documented schema version changes.
+:::note[v1.1 release]
+The repository contains the v1.1 implementation. Start it with a fresh data directory; prerelease data is not supported.
 :::
 
 ## Who it is for

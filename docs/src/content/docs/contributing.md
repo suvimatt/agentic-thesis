@@ -35,6 +35,8 @@ npm --prefix docs install
 Then run both contracts:
 
 ```bash
+.venv/bin/python scripts/export_openapi.py
+git diff --exit-code -- docs/openapi.json
 .venv/bin/pytest -q -p no:cacheprovider
 npm --prefix docs run build
 git diff --check
@@ -51,7 +53,7 @@ Starlight prints the local preview URL when it starts. The FastAPI product conti
 ## Documentation rules
 
 - Keep the README as the repository front door; move operational and reference detail here.
-- Keep commands executable and link to the runtime FastAPI `/docs` for exact HTTP schemas.
+- Keep commands executable and regenerate `docs/openapi.json` after changing FastAPI routes or models; CI rejects stale schemas.
 - Update the editable architecture HTML and rendered SVG together when architecture boundaries change.
 - Keep execution plans excluded from public navigation.
 - English is the authoritative documentation language for this first release; keep the two concise READMEs semantically aligned.

@@ -10,6 +10,10 @@
   "dependencies": {
     "@astrojs/starlight": "^0.42.0",
     "astro": "^7.2.10",
-    "sharp": "^0.35.3"
+    "sharp": "^0.35.3",
+    "starlight-openapi": "^0.26.2"
+  },
+  "overrides": {
+    "form-data": "^4.0.6"
   }
 }

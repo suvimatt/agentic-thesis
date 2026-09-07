@@ -17,7 +17,7 @@
 
 AgenticThesis is an open-source AI agent that tests your investment thesis—why you own a stock—against new company disclosures. Every proposed change links to exact source evidence and waits for Human Review before becoming authoritative history.
 
-> **Status:** `main` contains the v1.1 alpha implementation. The latest published package may trail the repository. Alpha schema upgrades intentionally require a fresh data directory.
+> **Status:** `main` contains the v1.1 implementation. The PyPI badge shows the latest published package. Start v1.1 with a fresh data directory; prerelease data is not supported.
 
 ## Why it exists
 
@@ -73,12 +73,12 @@ cd agentic-thesis
 python3 -m venv .venv
 .venv/bin/python -m pip install -e '.[test]'
 .venv/bin/pytest -q -p no:cacheprovider
-.venv/bin/agentic-thesis serve --data-dir ~/.agentic-thesis-v11-alpha
+.venv/bin/agentic-thesis serve
 ```
 
 See the [5-minute setup](https://thesis.getsuvi.com/getting-started/) for provider URLs, SEC configuration, and the first evidence cycle.
 
-## What v1.1 alpha provides
+## What v1.1 provides
 
 - **Authoritative collection:** SEC submissions and explicitly trusted issuer IR pages, including selected filing artifacts, PDFs, presentations, and official text transcripts.
 - **Immutable provenance:** original bytes, canonical source URLs, SHA-256 fingerprints, parser outcomes, fetch failures, and exact page/character locators.
@@ -104,11 +104,12 @@ The same Python distribution exposes:
 - [Core Workflow](https://thesis.getsuvi.com/core-workflow/)
 - [Python Engine](https://thesis.getsuvi.com/interfaces/python-engine/)
 - [HTTP API and CLI](https://thesis.getsuvi.com/interfaces/http-api-cli/)
+- [API Reference](https://thesis.getsuvi.com/api/)
 - [Operations](https://thesis.getsuvi.com/operations/)
 - [Architecture](https://thesis.getsuvi.com/architecture/)
 - [Evaluation and Limits](https://thesis.getsuvi.com/evaluation/)
 
-The runtime FastAPI `/docs` page remains the exact HTTP endpoint/schema reference for the installed version.
+The public [API Reference](https://thesis.getsuvi.com/api/) is generated from FastAPI's OpenAPI schema. After starting the local service, `http://127.0.0.1:8000/docs` remains available as an instance-local API debugger.
 
 ## Boundary and license
 

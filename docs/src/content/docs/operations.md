@@ -24,15 +24,15 @@ The vector index is derived data. The source artifacts, event identities, eviden
 
 Do not back up only Qdrant. Vectors without application state cannot reconstruct authoritative thesis history.
 
-## Alpha upgrades
+## Clean start for v1.1
 
-Current v1.1 alpha uses a clean schema and intentionally rejects earlier data directories without modifying them. Start it with a fresh directory:
+v1.1 uses a clean schema and rejects earlier or prerelease data directories without modifying them. Start with the default empty directory:
 
 ```bash
-agentic-thesis serve --data-dir ~/.agentic-thesis-v11-alpha
+agentic-thesis serve
 ```
 
-No migration or compatibility promise exists during alpha. Keep an older directory unchanged if you need to run its matching release again.
+No migration into v1.1 is provided. Choose another empty `--data-dir` if the default directory already contains older data.
 
 ## SEC access
 
@@ -59,6 +59,6 @@ The scheduler checks whether collection is due once per hour by default and reco
 | CLI lists missing variables | Populate the required reasoning and embedding credentials in the active `.env` |
 | SEC sync returns `503` | Set `AGENTIC_THESIS_SEC_USER_AGENT` and restart the application |
 | SEC/IR sync returns `502` | Inspect `/collection-attempts` and per-event failures; a failed check is not treated as “no change” |
-| Database is rejected | Use the package version matching that directory, or start the alpha with a fresh directory |
+| Database is rejected | Start v1.1 with a fresh, empty data directory |
 | PDF says `needs_ocr` | Supply an explicit bounded OCR function through the engine; no OCR model is downloaded automatically |
 | Approval returns `409` | Reload the latest thesis; another review advanced its authoritative version |

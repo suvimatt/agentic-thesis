@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agentic-thesis"
-version = "1.1.0a1"
+version = "1.1.0"
 description = "An open-source AI agent that tests investment theses against new company disclosures."
 readme = "README.md"
 license = "AGPL-3.0-only"
@@ -12,7 +12,7 @@ license-files = ["LICENSE"]
 authors = [{ name = "Matt Su" }]
 requires-python = ">=3.11"
 classifiers = [
-  "Development Status :: 3 - Alpha",
+  "Development Status :: 4 - Beta",
   "Intended Audience :: Developers",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.11",

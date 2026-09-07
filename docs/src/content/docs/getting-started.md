@@ -11,7 +11,7 @@ Install the latest published package for normal use:
 python -m pip install agentic-thesis
 ```
 
-The published package can trail the alpha code on `main`. To evaluate the current repository implementation:
+The published package can trail development on `main`. To evaluate the current repository implementation:
 
 ```bash
 git clone https://github.com/suvimatt/agentic-thesis.git
@@ -51,13 +51,9 @@ For the published package:
 agentic-thesis serve
 ```
 
-For alpha development, keep its state separate from an older release:
-
-```bash
-.venv/bin/agentic-thesis serve --data-dir ~/.agentic-thesis-v11-alpha
-```
-
 Open [http://127.0.0.1:8000](http://127.0.0.1:8000). The default data directory is `~/.agentic-thesis`; the selected directory contains thesis state, run history, checkpoints, artifacts, and the embedded vector index.
+
+v1.1 intentionally starts with a clean schema. Use a new data directory rather than a directory created by an earlier or prerelease version.
 
 ## First evidence cycle
 

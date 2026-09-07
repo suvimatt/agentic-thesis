@@ -5,11 +5,11 @@ description: Review AgenticThesis's reproducible checks, measured results, and d
 
 ## Current deterministic checks
 
-Observed on the checked-in fixtures on 2026-09-05:
+Observed on the checked-in fixtures. The deterministic suite was rerun on 2026-09-06; the retrieval measurements were recorded on 2026-09-05:
 
 | Check | Observed result |
 | --- | ---: |
-| Deterministic test cases | 32 passed: 30 together, 2 scheduler cases separately |
+| Deterministic test cases | 32 passed on Python 3.11 and 3.14 |
 | Wheel build | Passed |
 | 2023 / 2024 extracted tokens | 48,777 / 48,903 |
 | 2023 / 2024 retrieval windows | 111 / 112 |

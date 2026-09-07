@@ -1,0 +1,69 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.14"]
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install build and test dependencies
+        run: python -m pip install build twine ".[test]"
+
+      - name: Run deterministic tests
+        run: python -m pytest -q -p no:cacheprovider
+
+      - name: Verify generated OpenAPI schema
+        if: matrix.python-version == '3.11'
+        run: |
+          python scripts/export_openapi.py
+          git diff --exit-code -- docs/openapi.json
+
+      - name: Build and validate distributions
+        if: matrix.python-version == '3.11'
+        run: |
+          python -m build
+          python -m twine check dist/*
+
+      - name: Smoke-test built wheel
+        if: matrix.python-version == '3.11'
+        run: |
+          python -m venv /tmp/agentic-thesis-wheel
+          /tmp/agentic-thesis-wheel/bin/python -m pip install dist/*.whl
+          /tmp/agentic-thesis-wheel/bin/python -c \
+            "from agentic_thesis import AgenticThesisEngine"
+          /tmp/agentic-thesis-wheel/bin/agentic-thesis --help
+
+  docs:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22.12.0"
+          cache: npm
+          cache-dependency-path: docs/package-lock.json
+
+      - name: Install documentation dependencies
+        run: npm --prefix docs ci
+
+      - name: Build documentation
+        run: npm --prefix docs run build

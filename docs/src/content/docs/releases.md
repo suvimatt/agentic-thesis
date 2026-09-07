@@ -3,9 +3,9 @@ title: Release Notes
 description: Track the currently implemented AgenticThesis release behavior.
 ---
 
-## v1.1 alpha.1 — repository implementation
+## v1.1.0
 
-v1.1 alpha turns the earlier SEC-only flow into an authoritative company-information Radar with one recoverable processing path.
+v1.1 turns the earlier SEC-only flow into an authoritative company-information Radar with one recoverable processing path.
 
 - Preserves SEC filing indexes, primary reports, selected exhibits, and XML data with hashes and parser outcomes.
 - Traverses SEC submission history, includes selected form families and amendments, and links amendments when reporting-period identity is deterministic.
@@ -16,7 +16,7 @@ v1.1 alpha turns the earlier SEC-only flow into an authoritative company-informa
 - Retains exact page/character citations through Human Review and compare-and-swap thesis commits.
 - Adds the browser Radar Inbox and SEC/IR configuration surfaces.
 
-The code declares version `1.1.0a1`. Check [PyPI](https://pypi.org/project/agentic-thesis/) before assuming this repository version has been published.
+The code declares version `1.1.0`. Check [PyPI](https://pypi.org/project/agentic-thesis/) for the latest published package.
 
 ## Earlier milestones
 

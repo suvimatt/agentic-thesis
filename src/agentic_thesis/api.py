@@ -12,6 +12,7 @@ from collections.abc import AsyncIterator
 from contextlib import aclosing, asynccontextmanager
 from datetime import datetime, timezone
 from html.parser import HTMLParser
+from importlib.metadata import version as distribution_version
 from importlib.resources import files
 from pathlib import Path
 from typing import Any
@@ -538,7 +539,17 @@ def create_app(
         if engine is None:
             await app.state.engine.close()
 
-    app = FastAPI(title="AgenticThesis", version="1.1.0a1", lifespan=lifespan)
+    app = FastAPI(
+        title="AgenticThesis",
+        version=distribution_version("agentic-thesis"),
+        servers=[
+            {
+                "url": "http://127.0.0.1:8000",
+                "description": "Local self-hosted instance",
+            }
+        ],
+        lifespan=lifespan,
+    )
     if engine is not None:
         app.state.engine = (
             engine
@@ -651,20 +662,20 @@ def create_app(
         )
         return True
 
-    @app.get("/", response_class=FileResponse)
+    @app.get("/", response_class=FileResponse, include_in_schema=False)
     async def product_page() -> FileResponse:
         return FileResponse(Path(__file__).with_name("index.html"))
 
-    @app.post("/runs", status_code=202)
+    @app.post("/runs", status_code=202, tags=["Runs"])
     async def start_run(request: StartRun) -> dict:
         await launch_run(request.run_id, request.thesis_id, request.disclosure_id)
         return {"run_id": request.run_id, "status": "running"}
 
-    @app.get("/theses")
+    @app.get("/theses", tags=["Theses"])
     async def list_theses() -> list[ThesisSnapshot]:
         return await app.state.engine.list_theses()
 
-    @app.post("/theses", status_code=201)
+    @app.post("/theses", status_code=201, tags=["Theses"])
     async def create_thesis(thesis: ThesisSnapshot) -> ThesisSnapshot:
         try:
             return await app.state.engine.create_thesis(thesis)
@@ -673,18 +684,18 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    @app.get("/theses/{thesis_id}")
+    @app.get("/theses/{thesis_id}", tags=["Theses"])
     async def get_thesis(thesis_id: str) -> ThesisSnapshot:
         thesis = await app.state.engine.get_thesis(thesis_id)
         if thesis is None:
             raise HTTPException(status_code=404, detail="thesis not found")
         return thesis
 
-    @app.get("/monitors")
+    @app.get("/monitors", tags=["Monitoring"])
     async def list_monitors() -> list[SecMonitor]:
         return await app.state.engine.list_sec_monitors()
 
-    @app.put("/theses/{thesis_id}/monitor")
+    @app.put("/theses/{thesis_id}/monitor", tags=["Monitoring"])
     async def configure_monitor(
         thesis_id: str, request: SecMonitorInput
     ) -> SecMonitor:
@@ -695,11 +706,11 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
-    @app.get("/ir-monitors")
+    @app.get("/ir-monitors", tags=["Monitoring"])
     async def list_ir_monitors() -> list[IrMonitor]:
         return await app.state.engine.list_ir_monitors()
 
-    @app.put("/theses/{thesis_id}/ir-monitor")
+    @app.put("/theses/{thesis_id}/ir-monitor", tags=["Monitoring"])
     async def configure_ir_monitor(
         thesis_id: str, request: IrMonitorInput
     ) -> IrMonitor:
@@ -1082,30 +1093,30 @@ def create_app(
                 "run_ids": run_ids,
             }
 
-    @app.post("/theses/{thesis_id}/sync")
+    @app.post("/theses/{thesis_id}/sync", tags=["Monitoring"])
     async def sync_monitor(thesis_id: str) -> dict:
         return await sync_sec_monitor(thesis_id)
 
-    @app.post("/theses/{thesis_id}/ir-sync")
+    @app.post("/theses/{thesis_id}/ir-sync", tags=["Monitoring"])
     async def sync_ir(thesis_id: str) -> dict:
         return await sync_ir_monitor(thesis_id)
 
-    @app.get("/disclosures")
+    @app.get("/disclosures", tags=["Sources"])
     async def list_disclosures(thesis_id: str) -> list[DisclosureSummary]:
         return await app.state.engine.list_disclosures(thesis_id)
 
-    @app.get("/events/{event_id}")
+    @app.get("/events/{event_id}", tags=["Sources"])
     async def get_event(event_id: str) -> DisclosureEvent:
         event = await app.state.engine.get_event(event_id)
         if event is None:
             raise HTTPException(status_code=404, detail="event not found")
         return event
 
-    @app.get("/events/{event_id}/artifacts")
+    @app.get("/events/{event_id}/artifacts", tags=["Sources"])
     async def list_artifacts(event_id: str) -> list[SourceArtifact]:
         return await app.state.engine.list_artifacts(event_id)
 
-    @app.get("/artifacts/{artifact_id}")
+    @app.get("/artifacts/{artifact_id}", tags=["Sources"])
     async def get_artifact(artifact_id: str) -> Response:
         content = await app.state.engine.get_artifact_content(artifact_id)
         if content is None:
@@ -1120,19 +1131,19 @@ def create_app(
             },
         )
 
-    @app.get("/events/{event_id}/failures")
+    @app.get("/events/{event_id}/failures", tags=["Sources"])
     async def list_artifact_failures(event_id: str) -> list[ArtifactFetchFailure]:
         return await app.state.engine.list_artifact_failures(event_id)
 
-    @app.get("/collection-attempts")
+    @app.get("/collection-attempts", tags=["Monitoring"])
     async def list_collection_attempts(thesis_id: str) -> list[CollectionAttempt]:
         return await app.state.engine.list_collection_attempts(thesis_id)
 
-    @app.get("/radar")
+    @app.get("/radar", tags=["Radar"])
     async def list_radar_entries(thesis_id: str) -> list[RadarEntry]:
         return await app.state.engine.list_radar_entries(thesis_id)
 
-    @app.post("/disclosures", status_code=201)
+    @app.post("/disclosures", status_code=201, tags=["Sources"])
     async def create_disclosure(document: DisclosureDocument) -> dict:
         try:
             chunk_count = await app.state.engine.add_disclosure(document)
@@ -1147,22 +1158,22 @@ def create_app(
             "chunk_count": chunk_count,
         }
 
-    @app.get("/runs")
+    @app.get("/runs", tags=["Runs"])
     async def list_runs(thesis_id: str | None = None) -> list[RunSummary]:
         return await app.state.engine.list_runs(thesis_id)
 
-    @app.get("/theses/{thesis_id}/revisions")
+    @app.get("/theses/{thesis_id}/revisions", tags=["Theses"])
     async def list_revisions(thesis_id: str) -> list[ThesisRevision]:
         return await app.state.engine.list_revisions(thesis_id)
 
-    @app.get("/runs/{run_id}")
+    @app.get("/runs/{run_id}", tags=["Runs"])
     async def get_run(run_id: str) -> dict:
         state = await app.state.engine.get_run(run_id)
         if not state:
             raise HTTPException(status_code=404, detail="run not found")
         return _public_state(state)
 
-    @app.get("/runs/{run_id}/events")
+    @app.get("/runs/{run_id}/events", tags=["Runs"])
     async def run_events(run_id: str, request: Request) -> StreamingResponse:
         if await app.state.engine.get_run(run_id) is None:
             raise HTTPException(status_code=404, detail="run not found")
@@ -1207,7 +1218,7 @@ def create_app(
 
         return StreamingResponse(stream(), media_type="text/event-stream")
 
-    @app.post("/runs/{run_id}/review")
+    @app.post("/runs/{run_id}/review", tags=["Runs"])
     async def review_run(run_id: str, decision: ReviewDecision) -> dict:
         try:
             result = await app.state.engine.review(run_id, decision)

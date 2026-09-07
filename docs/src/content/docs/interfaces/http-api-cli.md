@@ -11,7 +11,7 @@ agentic-thesis serve [--data-dir PATH]
 
 The server listens on `127.0.0.1:8000`. Configuration is loaded from the current directory's `.env`, then the selected data directory's `.env`. The default data directory is `~/.agentic-thesis`.
 
-Open the application at `/` and the generated OpenAPI interface at [`/docs`](http://127.0.0.1:8000/docs). The runtime OpenAPI document is the exact endpoint/schema reference for the installed version.
+Open the application at `/`. The public [API Reference](/api/) is generated from the same FastAPI OpenAPI schema as the application. [`http://127.0.0.1:8000/docs`](http://127.0.0.1:8000/docs) remains available as an instance-local API debugger.
 
 ## Key workflow
 

@@ -1,0 +1,2170 @@
+{
+  "components": {
+    "schemas": {
+      "ArtifactFetchFailure": {
+        "properties": {
+          "error": {
+            "title": "Error",
+            "type": "string"
+          },
+          "event_id": {
+            "title": "Event Id",
+            "type": "string"
+          },
+          "occurred_at": {
+            "title": "Occurred At",
+            "type": "string"
+          },
+          "role": {
+            "title": "Role",
+            "type": "string"
+          },
+          "source_url": {
+            "title": "Source Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "event_id",
+          "role",
+          "source_url",
+          "error",
+          "occurred_at"
+        ],
+        "title": "ArtifactFetchFailure",
+        "type": "object"
+      },
+      "ClaimDelta": {
+        "properties": {
+          "claim_id": {
+            "title": "Claim Id",
+            "type": "string"
+          },
+          "evidence_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Evidence Ids",
+            "type": "array"
+          },
+          "explanation": {
+            "title": "Explanation",
+            "type": "string"
+          },
+          "matched_falsifier": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Matched Falsifier"
+          },
+          "status": {
+            "$ref": "#/components/schemas/DeltaStatus"
+          }
+        },
+        "required": [
+          "claim_id",
+          "status",
+          "explanation"
+        ],
+        "title": "ClaimDelta",
+        "type": "object"
+      },
+      "CollectionAttempt": {
+        "properties": {
+          "attempt_id": {
+            "title": "Attempt Id",
+            "type": "string"
+          },
+          "completed_at": {
+            "title": "Completed At",
+            "type": "string"
+          },
+          "cursor_after": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cursor After"
+          },
+          "cursor_before": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cursor Before"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "imported": {
+            "default": 0,
+            "title": "Imported",
+            "type": "integer"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "started_at": {
+            "title": "Started At",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/CollectionStatus"
+          },
+          "thesis_id": {
+            "title": "Thesis Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "attempt_id",
+          "thesis_id",
+          "source",
+          "status",
+          "started_at",
+          "completed_at"
+        ],
+        "title": "CollectionAttempt",
+        "type": "object"
+      },
+      "CollectionStatus": {
+        "enum": [
+          "succeeded",
+          "failed"
+        ],
+        "title": "CollectionStatus",
+        "type": "string"
+      },
+      "DeltaStatus": {
+        "enum": [
+          "supported",
+          "weakened",
+          "possibly_invalidated",
+          "unknown"
+        ],
+        "title": "DeltaStatus",
+        "type": "string"
+      },
+      "DisclosureDocument": {
+        "properties": {
+          "artifact_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Artifact Ids",
+            "type": "array"
+          },
+          "content": {
+            "maxLength": 10000000,
+            "minLength": 1,
+            "title": "Content",
+            "type": "string"
+          },
+          "document_id": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Document Id",
+            "type": "string"
+          },
+          "event_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Event Id"
+          },
+          "source_date": {
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "title": "Source Date",
+            "type": "string"
+          },
+          "source_id": {
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Source Id",
+            "type": "string"
+          },
+          "source_url": {
+            "default": "",
+            "title": "Source Url",
+            "type": "string"
+          },
+          "thesis_id": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Thesis Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "document_id",
+          "thesis_id",
+          "source_id",
+          "source_date",
+          "content"
+        ],
+        "title": "DisclosureDocument",
+        "type": "object"
+      },
+      "DisclosureEvent": {
+        "properties": {
+          "accepted_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accepted At"
+          },
+          "amended_event_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Amended Event Id"
+          },
+          "authority": {
+            "$ref": "#/components/schemas/SourceAuthority"
+          },
+          "event_date": {
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "title": "Event Date",
+            "type": "string"
+          },
+          "event_id": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Event Id",
+            "type": "string"
+          },
+          "event_type": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Event Type",
+            "type": "string"
+          },
+          "external_id": {
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "External Id",
+            "type": "string"
+          },
+          "metadata": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Metadata",
+            "type": "object"
+          },
+          "published_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Published At"
+          },
+          "source": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Source",
+            "type": "string"
+          },
+          "thesis_id": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Thesis Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "event_id",
+          "thesis_id",
+          "source",
+          "authority",
+          "event_type",
+          "external_id",
+          "event_date"
+        ],
+        "title": "DisclosureEvent",
+        "type": "object"
+      },
+      "DisclosureSummary": {
+        "properties": {
+          "document_id": {
+            "title": "Document Id",
+            "type": "string"
+          },
+          "event_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Event Id"
+          },
+          "source_date": {
+            "title": "Source Date",
+            "type": "string"
+          },
+          "source_id": {
+            "title": "Source Id",
+            "type": "string"
+          },
+          "source_url": {
+            "default": "",
+            "title": "Source Url",
+            "type": "string"
+          },
+          "thesis_id": {
+            "title": "Thesis Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "document_id",
+          "thesis_id",
+          "source_id",
+          "source_date"
+        ],
+        "title": "DisclosureSummary",
+        "type": "object"
+      },
+      "EvidenceItem": {
+        "properties": {
+          "artifact_id": {
+            "default": "",
+            "title": "Artifact Id",
+            "type": "string"
+          },
+          "chunk_id": {
+            "title": "Chunk Id",
+            "type": "string"
+          },
+          "end_char": {
+            "title": "End Char",
+            "type": "integer"
+          },
+          "evidence_id": {
+            "title": "Evidence Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "sentence",
+              "list_item",
+              "table_row"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "page_number": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page Number"
+          },
+          "quote": {
+            "title": "Quote",
+            "type": "string"
+          },
+          "score": {
+            "default": 0.0,
+            "title": "Score",
+            "type": "number"
+          },
+          "section": {
+            "title": "Section",
+            "type": "string"
+          },
+          "source_date": {
+            "title": "Source Date",
+            "type": "string"
+          },
+          "source_end_char": {
+            "title": "Source End Char",
+            "type": "integer"
+          },
+          "source_id": {
+            "title": "Source Id",
+            "type": "string"
+          },
+          "source_start_char": {
+            "title": "Source Start Char",
+            "type": "integer"
+          },
+          "source_text": {
+            "title": "Source Text",
+            "type": "string"
+          },
+          "source_url": {
+            "title": "Source Url",
+            "type": "string"
+          },
+          "start_char": {
+            "title": "Start Char",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "evidence_id",
+          "chunk_id",
+          "source_id",
+          "source_date",
+          "section",
+          "kind",
+          "source_url",
+          "start_char",
+          "end_char",
+          "source_start_char",
+          "source_end_char",
+          "quote",
+          "source_text"
+        ],
+        "title": "EvidenceItem",
+        "type": "object"
+      },
+      "EvidencePack": {
+        "properties": {
+          "claim_id": {
+            "title": "Claim Id",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/EvidenceItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "retained_evidence_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Retained Evidence Ids",
+            "type": "array"
+          },
+          "tokens_after": {
+            "title": "Tokens After",
+            "type": "integer"
+          },
+          "tokens_before": {
+            "title": "Tokens Before",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "claim_id",
+          "items",
+          "tokens_before",
+          "tokens_after",
+          "retained_evidence_ids"
+        ],
+        "title": "EvidencePack",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "IrMonitor": {
+        "properties": {
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "last_checked_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Checked At"
+          },
+          "last_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error"
+          },
+          "last_imported": {
+            "default": 0,
+            "title": "Last Imported",
+            "type": "integer"
+          },
+          "thesis_id": {
+            "title": "Thesis Id",
+            "type": "string"
+          },
+          "urls": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Urls",
+            "type": "array"
+          }
+        },
+        "required": [
+          "thesis_id",
+          "urls",
+          "enabled"
+        ],
+        "title": "IrMonitor",
+        "type": "object"
+      },
+      "IrMonitorInput": {
+        "properties": {
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "urls": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 10,
+            "minItems": 1,
+            "title": "Urls",
+            "type": "array"
+          }
+        },
+        "required": [
+          "urls"
+        ],
+        "title": "IrMonitorInput",
+        "type": "object"
+      },
+      "ParseStatus": {
+        "enum": [
+          "parsed",
+          "retained",
+          "needs_ocr",
+          "unsupported",
+          "failed"
+        ],
+        "title": "ParseStatus",
+        "type": "string"
+      },
+      "RadarEntry": {
+        "properties": {
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "event_id": {
+            "title": "Event Id",
+            "type": "string"
+          },
+          "matched_claim_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Matched Claim Ids",
+            "type": "array"
+          },
+          "matched_falsifiers": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Matched Falsifiers",
+            "type": "array"
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/RadarOutcome"
+          },
+          "policy_version": {
+            "title": "Policy Version",
+            "type": "string"
+          },
+          "radar_id": {
+            "title": "Radar Id",
+            "type": "string"
+          },
+          "reason_codes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reason Codes",
+            "type": "array"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
+          "thesis_id": {
+            "title": "Thesis Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "radar_id",
+          "thesis_id",
+          "event_id",
+          "outcome",
+          "policy_version",
+          "created_at"
+        ],
+        "title": "RadarEntry",
+        "type": "object"
+      },
+      "RadarOutcome": {
+        "enum": [
+          "needs_review",
+          "digest",
+          "ignored"
+        ],
+        "title": "RadarOutcome",
+        "type": "string"
+      },
+      "ReviewDecision": {
+        "properties": {
+          "action": {
+            "enum": [
+              "approve",
+              "reject"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "edited_delta": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ThesisDelta"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "title": "ReviewDecision",
+        "type": "object"
+      },
+      "RunStatus": {
+        "enum": [
+          "running",
+          "awaiting_review",
+          "committed",
+          "rejected",
+          "failed",
+          "version_conflict",
+          "invalid_review"
+        ],
+        "title": "RunStatus",
+        "type": "string"
+      },
+      "RunSummary": {
+        "properties": {
+          "base_thesis_version": {
+            "title": "Base Thesis Version",
+            "type": "integer"
+          },
+          "committed_thesis_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Committed Thesis Version"
+          },
+          "disclosure_id": {
+            "title": "Disclosure Id",
+            "type": "string"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/RunStatus"
+          },
+          "thesis_id": {
+            "title": "Thesis Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "thesis_id",
+          "disclosure_id",
+          "base_thesis_version",
+          "status"
+        ],
+        "title": "RunSummary",
+        "type": "object"
+      },
+      "SecMonitor": {
+        "properties": {
+          "cik": {
+            "title": "Cik",
+            "type": "string"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "forms": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Forms",
+            "type": "array"
+          },
+          "last_accession": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Accession"
+          },
+          "last_checked_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Checked At"
+          },
+          "last_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error"
+          },
+          "last_imported": {
+            "default": 0,
+            "title": "Last Imported",
+            "type": "integer"
+          },
+          "thesis_id": {
+            "title": "Thesis Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "thesis_id",
+          "cik",
+          "forms",
+          "enabled"
+        ],
+        "title": "SecMonitor",
+        "type": "object"
+      },
+      "SecMonitorInput": {
+        "properties": {
+          "cik": {
+            "pattern": "^\\d{1,10}$",
+            "title": "Cik",
+            "type": "string"
+          },
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "forms": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "minItems": 1,
+            "title": "Forms",
+            "type": "array"
+          }
+        },
+        "required": [
+          "cik",
+          "forms"
+        ],
+        "title": "SecMonitorInput",
+        "type": "object"
+      },
+      "SourceArtifact": {
+        "properties": {
+          "artifact_id": {
+            "title": "Artifact Id",
+            "type": "string"
+          },
+          "byte_length": {
+            "title": "Byte Length",
+            "type": "integer"
+          },
+          "content_hash": {
+            "title": "Content Hash",
+            "type": "string"
+          },
+          "event_id": {
+            "title": "Event Id",
+            "type": "string"
+          },
+          "media_type": {
+            "title": "Media Type",
+            "type": "string"
+          },
+          "parse_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parse Error"
+          },
+          "parse_status": {
+            "$ref": "#/components/schemas/ParseStatus"
+          },
+          "parser_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parser Name"
+          },
+          "parser_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parser Version"
+          },
+          "retrieved_at": {
+            "title": "Retrieved At",
+            "type": "string"
+          },
+          "role": {
+            "title": "Role",
+            "type": "string"
+          },
+          "source_url": {
+            "title": "Source Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "artifact_id",
+          "event_id",
+          "role",
+          "source_url",
+          "media_type",
+          "content_hash",
+          "byte_length",
+          "retrieved_at",
+          "parse_status"
+        ],
+        "title": "SourceArtifact",
+        "type": "object"
+      },
+      "SourceAuthority": {
+        "enum": [
+          "regulator",
+          "issuer",
+          "secondary",
+          "user_supplied"
+        ],
+        "title": "SourceAuthority",
+        "type": "string"
+      },
+      "StartRun": {
+        "properties": {
+          "disclosure_id": {
+            "title": "Disclosure Id",
+            "type": "string"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "thesis_id": {
+            "title": "Thesis Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "thesis_id",
+          "disclosure_id"
+        ],
+        "title": "StartRun",
+        "type": "object"
+      },
+      "ThesisClaim": {
+        "properties": {
+          "claim_id": {
+            "title": "Claim Id",
+            "type": "string"
+          },
+          "evidence_refs": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Evidence Refs",
+            "type": "array"
+          },
+          "falsifiers": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Falsifiers",
+            "type": "array"
+          },
+          "rationale": {
+            "title": "Rationale",
+            "type": "string"
+          },
+          "statement": {
+            "title": "Statement",
+            "type": "string"
+          }
+        },
+        "required": [
+          "claim_id",
+          "statement",
+          "rationale"
+        ],
+        "title": "ThesisClaim",
+        "type": "object"
+      },
+      "ThesisDelta": {
+        "properties": {
+          "base_thesis_version": {
+            "title": "Base Thesis Version",
+            "type": "integer"
+          },
+          "claim_deltas": {
+            "items": {
+              "$ref": "#/components/schemas/ClaimDelta"
+            },
+            "title": "Claim Deltas",
+            "type": "array"
+          }
+        },
+        "required": [
+          "base_thesis_version",
+          "claim_deltas"
+        ],
+        "title": "ThesisDelta",
+        "type": "object"
+      },
+      "ThesisRevision": {
+        "properties": {
+          "base_thesis_version": {
+            "title": "Base Thesis Version",
+            "type": "integer"
+          },
+          "committed_thesis_version": {
+            "title": "Committed Thesis Version",
+            "type": "integer"
+          },
+          "delta": {
+            "$ref": "#/components/schemas/ThesisDelta"
+          },
+          "disclosure_id": {
+            "title": "Disclosure Id",
+            "type": "string"
+          },
+          "evidence_packs": {
+            "items": {
+              "$ref": "#/components/schemas/EvidencePack"
+            },
+            "title": "Evidence Packs",
+            "type": "array"
+          },
+          "review": {
+            "$ref": "#/components/schemas/ReviewDecision"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "thesis_id": {
+            "title": "Thesis Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "thesis_id",
+          "disclosure_id",
+          "base_thesis_version",
+          "committed_thesis_version",
+          "delta",
+          "evidence_packs",
+          "review"
+        ],
+        "title": "ThesisRevision",
+        "type": "object"
+      },
+      "ThesisSnapshot": {
+        "properties": {
+          "claims": {
+            "items": {
+              "$ref": "#/components/schemas/ThesisClaim"
+            },
+            "title": "Claims",
+            "type": "array"
+          },
+          "company": {
+            "title": "Company",
+            "type": "string"
+          },
+          "thesis_id": {
+            "title": "Thesis Id",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "thesis_id",
+          "company",
+          "version",
+          "claims"
+        ],
+        "title": "ThesisSnapshot",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "title": "AgenticThesis",
+    "version": "1.1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/artifacts/{artifact_id}": {
+      "get": {
+        "operationId": "get_artifact_artifacts__artifact_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "artifact_id",
+            "required": true,
+            "schema": {
+              "title": "Artifact Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Artifact",
+        "tags": [
+          "Sources"
+        ]
+      }
+    },
+    "/collection-attempts": {
+      "get": {
+        "operationId": "list_collection_attempts_collection_attempts_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "thesis_id",
+            "required": true,
+            "schema": {
+              "title": "Thesis Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/CollectionAttempt"
+                  },
+                  "title": "Response List Collection Attempts Collection Attempts Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Collection Attempts",
+        "tags": [
+          "Monitoring"
+        ]
+      }
+    },
+    "/disclosures": {
+      "get": {
+        "operationId": "list_disclosures_disclosures_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "thesis_id",
+            "required": true,
+            "schema": {
+              "title": "Thesis Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/DisclosureSummary"
+                  },
+                  "title": "Response List Disclosures Disclosures Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Disclosures",
+        "tags": [
+          "Sources"
+        ]
+      },
+      "post": {
+        "operationId": "create_disclosure_disclosures_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DisclosureDocument"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Create Disclosure Disclosures Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Disclosure",
+        "tags": [
+          "Sources"
+        ]
+      }
+    },
+    "/events/{event_id}": {
+      "get": {
+        "operationId": "get_event_events__event_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "event_id",
+            "required": true,
+            "schema": {
+              "title": "Event Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DisclosureEvent"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Event",
+        "tags": [
+          "Sources"
+        ]
+      }
+    },
+    "/events/{event_id}/artifacts": {
+      "get": {
+        "operationId": "list_artifacts_events__event_id__artifacts_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "event_id",
+            "required": true,
+            "schema": {
+              "title": "Event Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/SourceArtifact"
+                  },
+                  "title": "Response List Artifacts Events  Event Id  Artifacts Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Artifacts",
+        "tags": [
+          "Sources"
+        ]
+      }
+    },
+    "/events/{event_id}/failures": {
+      "get": {
+        "operationId": "list_artifact_failures_events__event_id__failures_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "event_id",
+            "required": true,
+            "schema": {
+              "title": "Event Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ArtifactFetchFailure"
+                  },
+                  "title": "Response List Artifact Failures Events  Event Id  Failures Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Artifact Failures",
+        "tags": [
+          "Sources"
+        ]
+      }
+    },
+    "/ir-monitors": {
+      "get": {
+        "operationId": "list_ir_monitors_ir_monitors_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/IrMonitor"
+                  },
+                  "title": "Response List Ir Monitors Ir Monitors Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Ir Monitors",
+        "tags": [
+          "Monitoring"
+        ]
+      }
+    },
+    "/monitors": {
+      "get": {
+        "operationId": "list_monitors_monitors_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/SecMonitor"
+                  },
+                  "title": "Response List Monitors Monitors Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Monitors",
+        "tags": [
+          "Monitoring"
+        ]
+      }
+    },
+    "/radar": {
+      "get": {
+        "operationId": "list_radar_entries_radar_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "thesis_id",
+            "required": true,
+            "schema": {
+              "title": "Thesis Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/RadarEntry"
+                  },
+                  "title": "Response List Radar Entries Radar Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Radar Entries",
+        "tags": [
+          "Radar"
+        ]
+      }
+    },
+    "/runs": {
+      "get": {
+        "operationId": "list_runs_runs_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "thesis_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Thesis Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/RunSummary"
+                  },
+                  "title": "Response List Runs Runs Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Runs",
+        "tags": [
+          "Runs"
+        ]
+      },
+      "post": {
+        "operationId": "start_run_runs_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartRun"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Start Run Runs Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Start Run",
+        "tags": [
+          "Runs"
+        ]
+      }
+    },
+    "/runs/{run_id}": {
+      "get": {
+        "operationId": "get_run_runs__run_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Run Runs  Run Id  Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Run",
+        "tags": [
+          "Runs"
+        ]
+      }
+    },
+    "/runs/{run_id}/events": {
+      "get": {
+        "operationId": "run_events_runs__run_id__events_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Run Events",
+        "tags": [
+          "Runs"
+        ]
+      }
+    },
+    "/runs/{run_id}/review": {
+      "post": {
+        "operationId": "review_run_runs__run_id__review_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewDecision"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Review Run Runs  Run Id  Review Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Review Run",
+        "tags": [
+          "Runs"
+        ]
+      }
+    },
+    "/theses": {
+      "get": {
+        "operationId": "list_theses_theses_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ThesisSnapshot"
+                  },
+                  "title": "Response List Theses Theses Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Theses",
+        "tags": [
+          "Theses"
+        ]
+      },
+      "post": {
+        "operationId": "create_thesis_theses_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ThesisSnapshot"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ThesisSnapshot"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Thesis",
+        "tags": [
+          "Theses"
+        ]
+      }
+    },
+    "/theses/{thesis_id}": {
+      "get": {
+        "operationId": "get_thesis_theses__thesis_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "thesis_id",
+            "required": true,
+            "schema": {
+              "title": "Thesis Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ThesisSnapshot"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Thesis",
+        "tags": [
+          "Theses"
+        ]
+      }
+    },
+    "/theses/{thesis_id}/ir-monitor": {
+      "put": {
+        "operationId": "configure_ir_monitor_theses__thesis_id__ir_monitor_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "thesis_id",
+            "required": true,
+            "schema": {
+              "title": "Thesis Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IrMonitorInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IrMonitor"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Configure Ir Monitor",
+        "tags": [
+          "Monitoring"
+        ]
+      }
+    },
+    "/theses/{thesis_id}/ir-sync": {
+      "post": {
+        "operationId": "sync_ir_theses__thesis_id__ir_sync_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "thesis_id",
+            "required": true,
+            "schema": {
+              "title": "Thesis Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Sync Ir Theses  Thesis Id  Ir Sync Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Sync Ir",
+        "tags": [
+          "Monitoring"
+        ]
+      }
+    },
+    "/theses/{thesis_id}/monitor": {
+      "put": {
+        "operationId": "configure_monitor_theses__thesis_id__monitor_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "thesis_id",
+            "required": true,
+            "schema": {
+              "title": "Thesis Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SecMonitorInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SecMonitor"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Configure Monitor",
+        "tags": [
+          "Monitoring"
+        ]
+      }
+    },
+    "/theses/{thesis_id}/revisions": {
+      "get": {
+        "operationId": "list_revisions_theses__thesis_id__revisions_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "thesis_id",
+            "required": true,
+            "schema": {
+              "title": "Thesis Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ThesisRevision"
+                  },
+                  "title": "Response List Revisions Theses  Thesis Id  Revisions Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Revisions",
+        "tags": [
+          "Theses"
+        ]
+      }
+    },
+    "/theses/{thesis_id}/sync": {
+      "post": {
+        "operationId": "sync_monitor_theses__thesis_id__sync_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "thesis_id",
+            "required": true,
+            "schema": {
+              "title": "Thesis Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Sync Monitor Theses  Thesis Id  Sync Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Sync Monitor",
+        "tags": [
+          "Monitoring"
+        ]
+      }
+    }
+  },
+  "servers": [
+    {
+      "description": "Local self-hosted instance",
+      "url": "http://127.0.0.1:8000"
+    }
+  ]
+}

@@ -17,7 +17,7 @@
 
 AgenticThesis 是一个开源 AI Agent，用最新公司披露检验你的投资 Thesis——也就是你持有一只股票的理由；每个拟议变更都必须链接到精确原文，并在 Human Review 之后才能成为权威历史。
 
-> **当前状态：** `main` 包含 v1.1 alpha 实现，PyPI 最新发布版可能落后于仓库。Alpha schema 升级会明确要求使用新的数据目录。
+> **当前状态：** `main` 包含 v1.1 实现，PyPI 徽章显示最新发布版本。v1.1 请使用新的数据目录；不支持预发布版本的数据。
 
 ## 为什么需要它
 
@@ -73,12 +73,12 @@ cd agentic-thesis
 python3 -m venv .venv
 .venv/bin/python -m pip install -e '.[test]'
 .venv/bin/pytest -q -p no:cacheprovider
-.venv/bin/agentic-thesis serve --data-dir ~/.agentic-thesis-v11-alpha
+.venv/bin/agentic-thesis serve
 ```
 
 模型 URL、SEC 配置和第一次证据循环请参阅[五分钟英文指南](https://thesis.getsuvi.com/getting-started/)。第一版完整技术文档以英文为权威版本。
 
-## v1.1 alpha 已提供什么
+## v1.1 已提供什么
 
 - **权威采集：** SEC submissions 与明确可信的公司 IR 页面，包括重要 filing artifacts、PDF、演示文稿和官方文字稿。
 - **不可变来源：** 原始 bytes、canonical URL、SHA-256、解析结果、下载失败以及精确页码/字符位置。
@@ -104,11 +104,12 @@ python3 -m venv .venv
 - [核心工作流](https://thesis.getsuvi.com/core-workflow/)
 - [Python Engine](https://thesis.getsuvi.com/interfaces/python-engine/)
 - [HTTP API 与 CLI](https://thesis.getsuvi.com/interfaces/http-api-cli/)
+- [API Reference](https://thesis.getsuvi.com/api/)
 - [运行与维护](https://thesis.getsuvi.com/operations/)
 - [系统架构](https://thesis.getsuvi.com/architecture/)
 - [评测与边界](https://thesis.getsuvi.com/evaluation/)
 
-运行时 FastAPI `/docs` 页面始终是已安装版本的精确 endpoint/schema 参考。
+公开的 [API Reference](https://thesis.getsuvi.com/api/) 由 FastAPI OpenAPI schema 自动生成。启动本地服务后，`http://127.0.0.1:8000/docs` 仍可作为当前实例的 API 调试页面。
 
 ## 边界与协议
 

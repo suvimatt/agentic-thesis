@@ -18,8 +18,8 @@ hero:
       variant: minimal
 ---
 
-:::note[v1.1 release]
-The repository contains the v1.1 implementation. Start it with a fresh data directory; prerelease data is not supported.
+:::note[v1.1.0 released]
+[v1.1.0 is available on PyPI](https://pypi.org/project/agentic-thesis/1.1.0/). Start it with a fresh data directory; prerelease data is not supported.
 :::
 
 ## Who it is for
@@ -27,6 +27,8 @@ The repository contains the v1.1 implementation. Start it with a fresh data dire
 AgenticThesis is for self-directed, long-term investors and developers who want a thesis record that can survive new evidence. You state why a business deserves attention and what would prove each reason wrong; the engine monitors selected official sources, proposes evidence-linked updates, and preserves the review trail.
 
 It is also a reusable backend engine. The same Python distribution exposes the `AgenticThesisEngine` interface and the `agentic-thesis serve` self-hosted application.
+
+Visit the [GetSuvi official website](https://getsuvi.com/) for future updates to Suvi's broader investment-agent product family. AgenticThesis is its open-source thesis-monitoring engine.
 
 ## What it owns
 

@@ -7,6 +7,8 @@ description: See how AgenticThesis separates source custody, retrieval, model wo
 
 The editable diagram is available as a [standalone HTML source](/agentic-thesis-architecture.html).
 
+In v1.1, collection registers an analysis run only for a `needs_review` event with a usable disclosure; `digest` and `ignored` events remain in Radar without starting analysis. Each run is bound to one disclosure.
+
 ## Responsibility boundaries
 
 | Layer | Responsibility |
@@ -26,6 +28,8 @@ The editable diagram is available as a [standalone HTML source](/agentic-thesis-
 - **Checkpoint SQLite** holds resumable LangGraph execution state separately from application transactions.
 - **Embedded Qdrant** stores vectors for local retrieval and can be rebuilt from canonical chunks.
 - **Raw artifact bytes and hashes** make every accepted quote traceable to the fetched source version.
+
+IR change detection fingerprints normalized visible content so dynamic scripts do not generate duplicate disclosures; the stored artifact hash still identifies the original bytes. Vector indexing, retrieval queries, and analysis have explicit timeouts. Checkpoint recovery uses an explicit deserialization allowlist for workflow types.
 
 ## Why one workflow
 

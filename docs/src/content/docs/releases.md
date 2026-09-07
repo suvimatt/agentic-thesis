@@ -18,7 +18,7 @@ v1.1 turns the earlier SEC-only flow into an authoritative company-information R
 - Bounds OpenAI-compatible embedding requests, reports model timeouts explicitly, and registers checkpoint types for strict recovery.
 - Fingerprints normalized IR text so dynamic page scripts do not create duplicate disclosures.
 
-The code declares version `1.1.0`. Check [PyPI](https://pypi.org/project/agentic-thesis/) for the latest published package.
+v1.1.0 is published on [PyPI](https://pypi.org/project/agentic-thesis/1.1.0/), with the tagged source and release notes on [GitHub](https://github.com/suvimatt/agentic-thesis/releases/tag/v1.1.0). Check [PyPI](https://pypi.org/project/agentic-thesis/) for the latest published package.
 
 ## Earlier milestones
 

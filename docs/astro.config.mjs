@@ -55,6 +55,7 @@ export default defineConfig({
         {
           label: 'Project',
           items: [
+            { label: 'GetSuvi — Official Website', link: 'https://getsuvi.com/' },
             { label: 'Release Notes', slug: 'releases' },
             { label: 'Contributing', slug: 'contributing' },
             { label: 'License & Security', slug: 'project' },

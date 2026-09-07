@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <a href="https://pypi.org/project/agentic-thesis/"><img src="https://img.shields.io/pypi/v/agentic-thesis.svg" alt="PyPI version"></a>
+  <a href="https://pypi.org/project/agentic-thesis/"><img src="https://img.shields.io/pypi/v/agentic-thesis.svg?cacheSeconds=300" alt="PyPI version"></a>
   <a href="https://github.com/langchain-ai/langgraph"><img src="https://img.shields.io/badge/LangGraph-Stateful%20Workflow-1C3C3C" alt="LangGraph"></a>
   <a href="https://fastapi.tiangolo.com/"><img src="https://img.shields.io/badge/FastAPI-Async%20API-009688?logo=fastapi&logoColor=white" alt="FastAPI"></a>
   <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white" alt="Python 3.11+"></a>
@@ -17,7 +17,7 @@
 
 AgenticThesis is an open-source AI agent that tests your investment thesis—why you own a stock—against new company disclosures. Every proposed change links to exact source evidence and waits for Human Review before becoming authoritative history.
 
-> **Status:** `main` contains the v1.1 implementation. The PyPI badge shows the latest published package. Start v1.1 with a fresh data directory; prerelease data is not supported.
+> **Status:** [v1.1.0 is released on PyPI](https://pypi.org/project/agentic-thesis/1.1.0/). The badge tracks the latest published package. Start v1.1 with a fresh data directory; prerelease data is not supported.
 
 ## Why it exists
 

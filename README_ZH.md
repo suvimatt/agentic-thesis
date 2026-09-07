@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <a href="https://pypi.org/project/agentic-thesis/"><img src="https://img.shields.io/pypi/v/agentic-thesis.svg" alt="PyPI 版本"></a>
+  <a href="https://pypi.org/project/agentic-thesis/"><img src="https://img.shields.io/pypi/v/agentic-thesis.svg?cacheSeconds=300" alt="PyPI 版本"></a>
   <a href="https://github.com/langchain-ai/langgraph"><img src="https://img.shields.io/badge/LangGraph-Stateful%20Workflow-1C3C3C" alt="LangGraph"></a>
   <a href="https://fastapi.tiangolo.com/"><img src="https://img.shields.io/badge/FastAPI-Async%20API-009688?logo=fastapi&logoColor=white" alt="FastAPI"></a>
   <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white" alt="Python 3.11+"></a>
@@ -17,7 +17,7 @@
 
 AgenticThesis 是一个开源 AI Agent，用最新公司披露检验你的投资 Thesis——也就是你持有一只股票的理由；每个拟议变更都必须链接到精确原文，并在 Human Review 之后才能成为权威历史。
 
-> **当前状态：** `main` 包含 v1.1 实现，PyPI 徽章显示最新发布版本。v1.1 请使用新的数据目录；不支持预发布版本的数据。
+> **当前状态：** [v1.1.0 已在 PyPI 正式发布](https://pypi.org/project/agentic-thesis/1.1.0/)，徽章跟踪最新发布版本。v1.1 请使用新的数据目录；不支持预发布版本的数据。
 
 ## 为什么需要它
 

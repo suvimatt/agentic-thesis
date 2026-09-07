@@ -109,7 +109,7 @@
       <text x="348" y="108" fill="#172019" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">SYNC</text>
       <text x="440" y="128" fill="#172019" font-size="12" font-weight="600" font-family="ui-sans-serif,system-ui,sans-serif" text-anchor="middle">Atomic Ingestion + Radar</text>
       <text x="440" y="148" fill="#667069" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">HTML · XML · native PDF · bounded OCR</text>
-      <text x="440" y="160" fill="#667069" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">claim + falsifier · needs_review / digest</text>
+      <text x="440" y="160" fill="#667069" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">needs_review / digest / ignored</text>
 
       <!-- Node 3: Product -->
       <rect x="40" y="280" width="200" height="96" rx="6" fill="#f6f8f4"/>
@@ -169,9 +169,9 @@
       <rect x="320" y="592" width="880" height="80" rx="6" fill="#e9f3ec" stroke="#276749" stroke-width="1.2"/>
       <rect x="332" y="604" width="32" height="12" rx="2" fill="transparent" stroke="rgba(39,103,73,.55)" stroke-width=".8"/>
       <text x="348" y="612" fill="#276749" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">DB</text>
-      <text x="760" y="628" fill="#172019" font-size="12" font-weight="600" font-family="ui-sans-serif,system-ui,sans-serif" text-anchor="middle">SQLite Durable State</text>
-      <text x="760" y="648" fill="#667069" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">events · artifact bytes + hashes · collection attempts · Radar decisions</text>
-      <text x="760" y="664" fill="#667069" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">replayable events · checkpoints · immutable snapshots + heads</text>
+      <text x="760" y="628" fill="#172019" font-size="12" font-weight="600" font-family="ui-sans-serif,system-ui,sans-serif" text-anchor="middle">SQLite: Application State + Separate Checkpoints</text>
+      <text x="760" y="648" fill="#667069" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">app: artifacts + hashes · collection attempts · Radar · replayable events · snapshots + heads</text>
+      <text x="760" y="664" fill="#667069" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">checkpoints: resumable workflow state · explicit type allowlist</text>
 
       <!-- Legend -->
       <line x1="40" y1="716" x2="1240" y2="716" stroke="#dce3dd" stroke-width=".8"/>

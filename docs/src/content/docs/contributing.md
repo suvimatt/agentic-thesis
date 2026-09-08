@@ -56,6 +56,6 @@ Starlight prints the local preview URL when it starts. The FastAPI product conti
 - Keep commands executable and regenerate `docs/openapi.json` after changing FastAPI routes or models; CI rejects stale schemas.
 - Update the editable architecture HTML and rendered SVG together when architecture boundaries change.
 - Keep execution plans excluded from public navigation.
-- English is the authoritative documentation language for this first release; keep the two concise READMEs semantically aligned.
+- English remains the default and authoritative documentation language; keep Simplified Chinese pages and the two concise READMEs semantically aligned.
 
 Report bugs or propose focused changes through [GitHub Issues](https://github.com/suvimatt/agentic-thesis/issues).

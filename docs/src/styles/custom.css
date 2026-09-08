@@ -34,7 +34,7 @@ h2 {
   font-size: clamp(2.5rem, 5vw, 3.25rem);
 }
 
-img[alt='AgenticThesis architecture'] {
+img[src$='agentic-thesis-architecture.svg'] {
   border: 1px solid color-mix(in srgb, currentColor 14%, transparent);
   border-radius: 0.4rem;
 }
